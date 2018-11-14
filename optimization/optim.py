@@ -2,6 +2,15 @@
 
 By Danas Sutula
 
+TODO:
+    - Acceleration of convergence using the history of the sesnitivities.
+    - External phasefield evolution function could be beneficial. Adding it
+    will decouple the potential energy and the regularizing penalty in the
+    total cost functional.
+    - When the cost functional is compoxed of multiple terms, the relative
+    size of the terms becomes import. How to make it independent ? One way is
+    to have a separate solver for the phase field -- we are back at it again.
+
 '''
 
 import os
@@ -19,6 +28,17 @@ EPS = 1e-14
 PHASEFIELD_LIM_LOWER = -EPS
 PHASEFIELD_LIM_UPPER = 1.0 + EPS
 RADIANS_PER_DEGREE = math.pi / 180.0
+ITERATION_OUTFILE_NAME_U = "u"
+ITERATION_OUTFILE_NAME_P = "p"
+
+ERROR_ENUMERATION = {
+    'nonlinear_solver': 1,
+    'phasefield_backtrace': 2,
+    'maximum_iterations': 3,
+    }
+
+ERROR_NUMBER_TO_NAME = {v : k for k, v
+    in ERROR_ENUMERATION.items()}
 
 
 class TopologyOptimizer:
@@ -41,6 +61,14 @@ class TopologyOptimizer:
         bcs_z = [dolfin.DirichletBC(bc) for bc in bcs_u]
         for bc in bcs_z: bc.homogenize() # zero bc dofs
 
+        if C is None:
+            mesh = p.function_space().mesh()
+            p_mean = assemble(p*dolfin.dx) / assemble(1*dolfin.dx(mesh))
+            C = (p - p_mean) * dolfin.dx
+
+        self._J = J
+        self._C = C
+
         F    = dolfin.derivative(W, u)
         dFdu = dolfin.derivative(F, u)
         dFdp = dolfin.derivative(F, p)
@@ -49,20 +77,17 @@ class TopologyOptimizer:
         dJdp = dolfin.derivative(J, p)
         dCdp = dolfin.derivative(C, p)
 
-        self._J = J
-        self._C = C
-
         # Total energy dissipation with respect to phasefield
         self._dJdp = dJdp - dolfin.action(dolfin.adjoint(dFdp), z)
         self._dCdp = dCdp # NOTE: assuming `C` is independent of `u`
 
-        if parameters_topology_solver['write_solutions']:
-            self.iteration_outfile_u = outfile(title='u')
-            self.iteration_outfile_p = outfile(title='p')
+        self._DJ = dolfin.Function(p.function_space()) # FIXME
+        self._Dp = dolfin.Function(p.function_space()) # FIXME
 
         # NOTE: `dFdu` is equivalent to `adjoint(dFdu)` because of symmetry
         adjoint_problem = dolfin.LinearVariationalProblem(dFdu, dJdu, z, bcs_z)
         nonlinear_problem = dolfin.NonlinearVariationalProblem(F, u, bcs_u, dFdu)
+        # phasefield_problem = # TODO or NOT TODO ?
 
         self.adjoint_solver = dolfin.LinearVariationalSolver(adjoint_problem)
         update_parameters(self.adjoint_solver.parameters, parameters_adjoint_solver)
@@ -74,6 +99,14 @@ class TopologyOptimizer:
 
         self.parameters_topology_solver = parameters_topology_solver.copy()
         self.record_iteration_state = iteration_state_recording_function
+
+        if self.parameters_topology_solver['write_solutions']:
+            self._iteration_outfile_u = dolfin_file(ITERATION_OUTFILE_NAME_U)
+            self._iteration_outfile_p = dolfin_file(ITERATION_OUTFILE_NAME_P)
+        else:
+            self._iteration_outfile_u = None
+            self._iteration_outfile_p = None
+
 
     def optimize(self, stepsize_ini=None, stepsize_min=None, stepsize_max=None):
 
@@ -90,6 +123,11 @@ class TopologyOptimizer:
         rtol_p = prm['relative_tolerance_phasefield']
         atol_C = prm['absolute_tolerance_constraint']
         atol_J = prm['absolute_tolerance_energy']
+
+        if write_solutions:
+            if not self._iteration_outfile_u or not self._iteration_outfile_p:
+                self._iteration_outfile_u = dolfin_file(ITERATION_OUTFILE_NAME_U)
+                self._iteration_outfile_p = dolfin_file(ITERATION_OUTFILE_NAME_P)
 
         if stepsize_decrease_factor < 0.0 or stepsize_decrease_factor > 1.0:
             raise ValueError('Step-size decrease factor must be between 0.0 and 1.0')
@@ -127,27 +165,22 @@ class TopologyOptimizer:
             print('INFO: Setting `stepsize_max` to `stepsize_ini`')
             stepsize_max = stepsize_ini
 
-        coarsening_cossim = math.cos(coarsening_delta_angle * RADIANS_PER_DEGREE)
-        refinement_cossim = math.cos(refinement_delta_angle * RADIANS_PER_DEGREE)
-
-        J = self._J # Total energy
-        C = self._C # Constraint
-
-        dJdp = self._dJdp
-        dCdp = self._dCdp
+        coarsening_cossim = math.cos(RADIANS_PER_DEGREE * coarsening_delta_angle)
+        refinement_cossim = math.cos(RADIANS_PER_DEGREE * refinement_delta_angle)
 
         J_val_prv = np.inf
         C_val_prv = np.inf
 
+        dJdp_arr_prv = None
+        norm_dJdp_prv = None
+
         p_vec = self._p.vector()
         p_arr = p_vec.get_local()
-
-        # dp_arr = np.empty_like(p_arr)
-        dp_arr_prv = np.ones_like(p_arr)
 
         stepsize = stepsize_ini
         is_converged = False
         num_diverged = 0
+        error_number = 0
 
         for k_itr in range(maximum_iterations):
 
@@ -155,6 +188,7 @@ class TopologyOptimizer:
 
             if not b:
                 print('\nERROR: Nonlinear problem could not be solved.\n')
+                error_number = ERROR_ENUMERATION['nonlinear_solver']
                 is_converged = False
                 break
 
@@ -162,51 +196,24 @@ class TopologyOptimizer:
             self.record_iteration_state()
 
             if write_solutions:
-                self.iteration_outfile_u << self._u
-                self.iteration_outfile_p << self._p
+                self._iteration_outfile_u << self._u
+                self._iteration_outfile_p << self._p
 
-            J_val = assemble(J)
-            C_val = assemble(C)
+            J_val = assemble(self._J)
+            C_val = assemble(self._C)
 
-            dJdp_arr = assemble(dJdp).get_local()
-            dCdp_arr = assemble(dCdp).get_local()
+            dJdp_arr = assemble(self._dJdp).get_local()
+            dCdp_arr = assemble(self._dCdp).get_local()
 
-            dp_arr = dJdp_arr # to be rescaled in-place (dJdp_arr not required)
-            dp_aux = dCdp_arr.copy() # to be rescaled (dCdp_arr still required)
+            # Scale for target dissipation
+            norm_dJdp = dJdp_arr.dot(dJdp_arr)
+            scale = stepsize*J_val/norm_dJdp
 
-            # Scale dp_arr to get target energy dissipation rate
-            dp_arr *= (-stepsize) * J_val / dJdp_arr.dot(dJdp_arr)
+            # Advance in opposite direction
+            dp_arr = dJdp_arr * (-scale)
 
-            while True:
 
-                # Solve residual equation for correctional scale factor
-                # C + \grad C \dot [\delta p + \delta p_aux scaler] = 0
-                # Apply scale factor on the correctional change dp_aux
-
-                dp_aux *= -(C_val + dCdp_arr.dot(dp_arr)) / dCdp_arr.dot(dp_aux)
-                dp_aux *= min(1.0, math.sqrt(dp_arr.dot(dp_arr) / dp_aux.dot(dp_aux)))
-
-                # Apply correction
-                dp_arr += dp_aux
-
-                # Masks for lower and upper bounds
-                mask_lwr = p_arr + dp_arr < -EPS
-                mask_upr = p_arr + dp_arr > 1.0+EPS
-
-                # Enforce lower and upper bounds
-                if np.any(mask_lwr) or np.any(mask_upr):
-
-                    dp_arr[mask_lwr] = -p_arr[mask_lwr]
-                    dp_arr[mask_upr] = 1.0-p_arr[mask_upr]
-
-                    dp_aux[mask_lwr] = 0.0
-                    dp_aux[mask_upr] = 0.0
-
-                else:
-                    break
-
-            cossim = dp_arr.dot(dp_arr_prv) / math.sqrt(
-                dp_arr.dot(dp_arr) * dp_arr_prv.dot(dp_arr_prv))
+            ### Check convergence
 
             is_constraint_converging = \
                 abs(C_val_prv) > abs(C_val) > atol_C
@@ -214,18 +221,38 @@ class TopologyOptimizer:
             if J_val_prv > J_val or is_constraint_converging:
 
                 if J_val_prv - J_val < atol_J and abs(C_val) < atol_C:
-                    print('INFO: Negligible energy change')
+                    print('INFO: Negligible change in cost functional')
                     is_converged = True
                     break
+
+                if norm_dJdp_prv:
+                    cossim = (dJdp_arr.dot(dJdp_arr_prv) /
+                        math.sqrt(norm_dJdp * norm_dJdp_prv))
+
+                else: # k_itr == 0
+                    # Initialize `cossim` so that `stepsize` will not be changed
+                    # Requirement: refinement_cossim < cossim < coarsening_cossim
+                    cossim = coarsening_cossim - EPS
 
                 J_val_prv = J_val
                 C_val_prv = C_val
 
+                dJdp_arr_prv = dJdp_arr
+                norm_dJdp_prv = norm_dJdp
+
             else:
 
-                print('\nWARNING: Solution diverged (backtrace)\n')
+                print('\nWARNING: Solution diverged (try backtracking)\n')
+
+                if stepsize < stepsize_min + EPS:
+                    print('\nWARNING: Step-size already minimum (will not backtrack)\n')
+                    error_number = ERROR_ENUMERATION['phasefield_backtrace']
+                    is_converged = False
+                    break
+
                 if num_diverged == maximum_diverged:
-                    print('\nERROR: Reached maximum times diverged\n')
+                    print('\nERROR: Reached maximum times diverged (will not backtrack)\n')
+                    error_number = ERROR_ENUMERATION['phasefield_backtrace']
                     is_converged = False
                     break
 
@@ -235,8 +262,11 @@ class TopologyOptimizer:
                 num_diverged += 1
                 cossim = -1.0
 
+
+            ### Adapt phasefield increment
+
             if cossim < refinement_cossim \
-                and stepsize is not stepsize_min:
+                and stepsize > stepsize_min + EPS:
                 stepsize *= stepsize_decrease_factor
 
                 if stepsize > stepsize_min:
@@ -251,7 +281,7 @@ class TopologyOptimizer:
                     dp_arr *= scaler
 
             elif cossim > coarsening_cossim \
-                and stepsize is not stepsize_max:
+                and stepsize < stepsize_max - EPS:
                 stepsize *= stepsize_increase_factor
 
                 if stepsize < stepsize_max:
@@ -266,16 +296,64 @@ class TopologyOptimizer:
                     dp_arr *= scaler
 
 
+            ### Enforce equality constraint
+
+            # Correction for dp_arr
+            dp_aux = dCdp_arr.copy()
+
+            # To attempt corrections while nonzero
+            dCdp_dot_dp_aux = dCdp_arr.dot(dp_aux)
+
+            while dCdp_dot_dp_aux:
+
+                # Solve residual equation for correctional scale factor
+                # C + \grad C \dot [\delta p - \delta p_aux scale] = 0
+                # Apply scale factor on the correctional change dp_aux
+
+                dp_aux *= (C_val + dCdp_arr.dot(dp_arr)) / dCdp_dot_dp_aux
+                scale = math.sqrt(dp_arr.dot(dp_arr) / dp_aux.dot(dp_aux))
+
+                # Aim for |dp_aux| <= |dp_arr|
+                if scale < 1.0: dp_aux *= scale
+
+                # Apply correction
+                dp_arr -= dp_aux
+
+                # Masks for lower and upper bounds
+                mask_upr = p_arr + dp_arr > PHASEFIELD_LIM_UPPER
+                mask_lwr = p_arr + dp_arr < PHASEFIELD_LIM_LOWER
+
+                # Enforce lower and upper bounds
+                if np.any(mask_upr) or np.any(mask_lwr):
+
+                    dp_arr[mask_upr] = 1.0-p_arr[mask_upr]
+                    dp_arr[mask_lwr] = -p_arr[mask_lwr]
+
+                    dp_aux[mask_upr] = 0.0
+                    dp_aux[mask_lwr] = 0.0
+
+                else:
+                    # Successful constraint correction
+                    break
+
+                # To re-attempt correction if nonzero
+                dCdp_dot_dp_aux = dCdp_arr.dot(dp_aux)
+
+            else:
+                print('ERROR: Can not enforce equality constraint')
+                error_number = ERROR_ENUMERATION['constraint_correction']
+                is_converged = False
+                break
+
             print('INFO: '
                   f'k:{k_itr:3d}, '
                   f'J:{J_val: 9.3e}, '
                   f'C:{C_val: 9.3e}, '
-                  f'dp_min:{dp_arr.min(): 8.2e}, '
-                  f'dp_max:{dp_arr.max(): 8.2e}, '
+                  f'cossim:{cossim: 8.2e}, '
                   f'stepsize:{stepsize: 8.2e}, '
-                  f'cosine:{cossim: 9.3e}, '
                   )
 
+            # Check phasefield convergence
             if dp_arr.dot(dp_arr) < p_arr.dot(p_arr) * rtol_p**2:
                 print('INFO: Negligible phase-field change (break)')
                 is_converged = True
@@ -285,9 +363,13 @@ class TopologyOptimizer:
             dp_arr_prv = dp_arr
             p_vec.set_local(p_arr)
 
+            assert p_arr.min() > PHASEFIELD_LIM_LOWER
+            assert p_arr.max() < PHASEFIELD_LIM_UPPER
+
         else:
 
             print('\nWARNING: Reached maximum number of iterations\n')
+            error_number = ERROR_ENUMERATION['maximum_iterations']
             is_converged = False
 
         if not is_converged:
@@ -296,7 +378,33 @@ class TopologyOptimizer:
             else:
                 print('\nERROR: Iterations did not converge\n')
 
-        return is_converged
+        return is_converged, error_number
+
+
+    def enforce_phasefield_bounds(self, p_arr, dp_arr):
+        '''Enforce bounds on the phasfield update.
+
+        Enforce condition: 0 <= p_arr + dp_arr <= 1.0
+
+        Parameters
+        ----------
+        p_arr (numpy.ndarray) : Nodal values of phasefield
+        dp_arr (numpy.ndarray) : Phasefield increment values
+
+        Returns
+        -------
+        bool : True if `dp_arr` was modified else False.
+
+        '''
+
+        mask_lwr = p_arr + dp_arr < PHASEFIELD_LIM_LOWER
+        mask_upr = p_arr + dp_arr > PHASEFIELD_LIM_UPPER
+
+        dp_arr[mask_lwr] = -p_arr[mask_lwr]
+        dp_arr[mask_upr] = 1.0-p_arr[mask_upr]
+
+        return any(mask_upr) or any(mask_lwr)
+
 
     def apply_pde_filter(self, k, degree=1):
 
@@ -313,34 +421,43 @@ class TopologyOptimizer:
         self._p.interpolate(p)
 
 
-def pde_filter(p_in, p_out, k):
+# FIXME
+def solve_phasefield_problem(p, Dp, DJ, kappa, stepsize):
     '''
     PDE filter as a minimization of functional:
         \int (k |Dp| + (p-p_in)**2) dx
 
     '''
 
-    if not k > 0.0:
-        raise ValueError('Require k > 0')
+    ALPHA = 0.5 # 0 <= ALPHA <= 1
 
-    V = p_in.function_space()
+    dfdp = 30*p**2*(p**2 - 2*p + 1) # TEMP
+    # dfdp = 1
+
+    if not kappa > 0.0:
+        raise ValueError('Require kappa > 0')
+
+    V = Dp.function_space()
     v = dolfin.TestFunction(V)
-    p = dolfin.TrialFunction(V)
+    Dp_ = dolfin.TrialFunction(V)
 
-    a = (k*dolfin.dot(dolfin.grad(p), dolfin.grad(v)) + p*v) * dolfin.dx
+    # diffusive_part =
 
-    L = p_in * v * dolfin.dx
+    lhs = Dp_ * v * dolfin.dx \
+        + ALPHA * stepsize * kappa*dolfin.dot(dolfin.grad(Dp_), dolfin.grad(v)) * dolfin.dx
 
-    dolfin.solve(a==L, p_out, bcs=[],
+    rhs = - stepsize * DJ * 10 * dfdp * v * dolfin.dx \
+          - stepsize * kappa*dolfin.dot(dolfin.grad(p), dolfin.grad(v)) * dolfin.dx
+
+    dolfin.solve(lhs==rhs, Dp, bcs=[],
         solver_parameters={"linear_solver": "lu"},
         form_compiler_parameters={"optimize": True})
 
-    # Enforce lower bound since no Dirichlet BC
-    p_out.vector()[p_out.vector()<0.0] = 0.0
-    p_out.vector()[p_out.vector()>1.0] = 1.0
+    Dp.vector()[:] /= (stepsize/Dp.vector().max())
 
 
-def update_phasefield(p_in, p_out, k):
+
+def pde_filter(p_in, p_out, k):
     '''
     PDE filter as a minimization of functional:
         \int (k |Dp| + (p-p_in)**2) dx
@@ -393,7 +510,7 @@ def update_parameters(lhs, rhs):
             lhs[k] = rhs[k]
 
 
-def outfile(title, ext='pvd'):
+def dolfin_file(name, ext='pvd'):
 
     curdir = os.getcwd()
 
@@ -409,7 +526,7 @@ def outfile(title, ext='pvd'):
         if os.path.isfile(oldfile):
             os.remove(oldfile)
 
-    outfile = os.path.join(outdir, title)
-    outfile += os.extsep + ext
+    filepath = os.path.join(outdir, name)
+    filepath += os.extsep + ext
 
-    return dolfin.File(outfile)
+    return dolfin.File(filepath)
