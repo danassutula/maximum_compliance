@@ -1,16 +1,32 @@
-import dolfin
+import os
 
-mesh = dolfin.UnitSquareMesh(10,10)
-V = dolfin.FucntionSpace(mesh, 'CG', 1)
-u = dolfin.Function(V)
+# Extensions of files that are allowed to be deleted
+FILE_EXTENSIONS = ['.pvd', '.vtu', '.h5', '.xdmf']
 
-dolfin.File('saved_mesh.xml') << mesh
-dolfin.File('saved_u_CG_1.xml') << u
+def cleanup_filepath(filepath):
+    '''Clean up file path. If file directory does not exist, it is created;
+    otherwise, if directory already exists, any existing files are removed.
+    '''
 
-mesh_old = dolfin.Mesh('saved_mesh.xml')
-V_new = dolfin.FucntionSpace(mesh_old, 'CG', 1 )
-u_old = dolfin.Function(V_old, 'saved_u_CG_1.xml')
+    dirpath, filename = os.path.split(filepath)
+    _, ext = os.path.splitext(filename)
 
-mesh_new = dolfin.UnitSquareMesh(100, 100)
-V_new = dolfin.FunctionSpace(mesh_new, 'CG', 1)
-u_new = dolfin.project(u_old, V_new)
+    if ext not in FILE_EXTENSIONS:
+        raise ValueError('File name is missing a valid file extension')
+
+    if not dirpath or dirpath == os.path.curdir or dirpath == os.path.sep:
+        raise ValueError('File path should contain at least one sub-directory')
+
+    if not os.path.exists(dirpath):
+        os.makedirs(dirpath)
+
+    dirpath += os.sep
+
+    for item in os.listdir(dirpath):
+        item = dirpath + item
+
+        if os.path.isfile(item):
+            _, ext = os.path.splitext(item)
+
+            if ext in FILE_EXTENSIONS:
+                os.remove(item)

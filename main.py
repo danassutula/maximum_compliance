@@ -14,8 +14,10 @@ Todo:
 
 * Solve for the initial phasefield soluton.
 
+* Need to decompose strain energy into compression and tensionself.
 * Phase field filtering
 * Remove zero energy modes
+
 
 FIXME:
 * The regularization is mesh dependent.
@@ -24,6 +26,14 @@ AIMING FOR:
 Thin defects:
     penalize phasefield to get smaller defects,
     penalize gradient to avoid islands (?)
+
+TODO:
+! Require mesh-independence. Do enough smoothing
+
+In fracture mechnicas using pf, the length scale can be controled easily thanks
+to external load control and energy exchange/balance. In topo. optimization
+it is more difficul because in the miinimization there is the competition
+between the strain energy dissipation and the phasefield gradient
 
 '''
 
@@ -41,30 +51,48 @@ import scipy.linalg as linalg
 import matplotlib.pyplot as plt
 
 from dolfin import *
+
 import optimization
 import material
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+import optimization
+import utility
+
 import importlib # TEMP
+# importlib.reload(optimization.common) # TEMP
 importlib.reload(optimization.config) # TEMP
-importlib.reload(optimization.optim) # TEMP
+importlib.reload(optimization.filter) # TEMP
+importlib.reload(optimization.utility) # TEMP
+importlib.reload(optimization.optim_adjoint) # TEMP
+importlib.reload(optimization.optim_direct) # TEMP
 importlib.reload(optimization) # TEMP
+importlib.reload(utility) # TEMP
+
 
 def plot(*args, **kwargs):
     plt.figure(kwargs.pop('name', None))
     dolfin.plot(*args, **kwargs)
     plt.show()
 
-# NOTE: It's probably important to solve the phase-field equation for time 0
-# If the phase-field equation is not solved, the surface energy could locally
-# decrease where the phase-field would increase. This is not physical.
 
+output_directory = "results"
+output_filename_u = "tmp/u.pvd" # "u.xdmf"
+output_filename_p = "tmp/p.pvd" # "p.xdmf"
 
-def M(p):
-    '''Double well function. Penalty for the transition zone (p = 0.5).'''
-    return (1-dolfin.cos(2*DOLFIN_PI * p))/2
+output_filepath_u = os.path.join(output_directory, output_filename_u)
+output_filepath_p = os.path.join(output_directory, output_filename_p)
+
+utility.cleanup_filepath(output_filepath_u)
+utility.cleanup_filepath(output_filepath_p)
+
+outfile_u = dolfin.File(output_filepath_u)
+outfile_p = dolfin.File(output_filepath_p)
+
+# outfile_u = dolfin.XDMFFile(output_filepath_u)
+# outfile_p = dolfin.XDMFFile(output_filepath_p)
 
 
 def damage_density(p):
@@ -72,12 +100,11 @@ def damage_density(p):
     # p**2 is not great because it allows for negligable
     return p
 
-
 def phasefield_regularization(p):
     return 0.5*dot(grad(p),grad(p))
 
 
-def material_integrity(p, g0, d=2):
+def material_integrity(p, mi_0):
     '''Material integrity from the phase-field.
 
     Important
@@ -92,11 +119,14 @@ def material_integrity(p, g0, d=2):
             isinstance(p, np.ndarray)):
         raise TypeError
 
-    if d <= 1:
-        # Must forbid energy dissipation for a fully damaged material
-        raise ValueError('Require d > 1')
+    EPS = 1e-12 # NOTE: Important for stability of sign
+    POW = 2
 
-    return g0 + (1.0-g0) * (1.0-p) ** d
+    # if POW <= 1:
+    #     # No energy dissipation if fully damaged
+    #     raise ValueError('Require POW >= 1')
+
+    return mi_0 + (1.0-mi_0) * ((1.0+EPS)-p) ** POW
 
 
 def insert_defect(p, xc, r, rtol):
@@ -128,27 +158,49 @@ def insert_defect_array(xlim, ylim, n, m, p, r, rtol):
         insert_defect(p, xc, r, rtol)
 
 
-def set_target_phasefield_fraction(t):
-    p_mean.assign(phasefield_fraction_min * (1-t) + phasefield_fraction_max * t)
-
-
 ### Model Parameters
 
-# defect_energy_density  = Gc = Constant(0.05) # Defect size inversely correlated with Gc
-double_well_parameter = Mc = Constant(1.0)
-damage_energy_density = Gc = Constant(1.0)
-regularization_length = k0 = Constant(0.02) # Defect diffusivity correlates with k0
-material_integrity_min = g0 = Constant(1e-3)
-target_phasefield = p_mean = Constant(0.1)
-stress_penalty_parameter = Constant(1e-2)
+# Parameter influencing defect size
+stabilizing_diffusivity = Constant(1e-4)
+
+regularization_length  = c0_rg = Constant(1e-3 * 0)
+regularization_length  = c_rg  = Constant(1e-3 * 50)
+material_integrity_min = mi_0  = Constant(0.1)
+
+target_external_loading_steps = np.linspace(0, 0.4, 2)
+target_phasefield_values = np.linspace(0.05, 0.25, 11)
+
+# target_phasefield_values = np.linspace(0.001, 0.06, 100)
+# target_phasefield_values = np.linspace(0.001, 0.06, 100)[::-1]
+
+# p_mean_0 = 0.001
+# p_mean_1 = 0.050
+#
+# delta_p = p_mean_1 - p_mean_0
+#
+# num_periods = 3
+#
+# target_phasefield_oscilation = 0.1 * delta_p * \
+#     np.sin((target_phasefield_values-p_mean_0)
+#            * (num_periods * 2*math.pi / abs(delta_p)))
+# #
+# target_phasefield_values -= target_phasefield_oscilation
+#
+# target_phasefield_values -= target_phasefield_values.min()
+# target_phasefield_values += p_mean_0
 
 material_parameters = {
     'E': Constant(100.0),
     'nu': Constant(0.3)
     }
 
-target_extension_mangitude = np.linspace(0, 0.2, 2)[1:]
-target_phasefield_fractions = np.linspace(0.05, 0.1, 5)
+# Initialize phasefield target
+p_mean = Constant(0.0)
+
+nx = ny = 50 # 2.5e-3
+# nx = ny = 80 # 2.5e-3
+nx = ny = 100 # 2.5e-4
+# nx = ny = 200 # 2.5e-4
 
 
 ### Discretization
@@ -156,8 +208,9 @@ target_phasefield_fractions = np.linspace(0.05, 0.1, 5)
 element_u = {'scheme': 'CG', 'degree': 1}
 element_p = {'scheme': 'CG', 'degree': 1}
 
-# mesh_domain = UnitSquareMesh(150, 150, diagonal="left")
-mesh_domain = UnitSquareMesh(250, 250, diagonal="left/right")
+mesh_domain = UnitSquareMesh(nx, ny, diagonal="left/right")
+
+dx_domain = dx(mesh_domain)
 
 coord = mesh_domain.coordinates()
 L_max = coord.max()-coord.min()
@@ -169,17 +222,7 @@ atol2 = atol ** 2
 V_u = VectorFunctionSpace(mesh_domain, element_u['scheme'], element_u['degree'])
 V_p = FunctionSpace(mesh_domain, element_p['scheme'], element_p['degree'])
 
-# uD_bot = Expression((' 0.0*s','-1.0*s'), s=0, degree=0)
-# uD_top = Expression((' 0.0*s',' 1.0*s'), s=0, degree=0)
-#
-# uD_lhs = Expression(('-1.0*s',' 0.0*s'), s=0, degree=0)
-# uD_rhs = Expression((' 1.0*s',' 0.0*s'), s=0, degree=0)
-
-def scale_boundary_displacements(s):
-    '''To be called inside solver loop.'''
-    # uD_bot.s = uD_top.s = uD_lhs.s = uD_rhs.s = s
-    uxD.ux = s
-    uyD.uy = s
+V_ux, V_uy = V_u.split()
 
 def boundary_bot(x, on_boundary):
     return on_boundary and x[1] < atol
@@ -193,32 +236,37 @@ def boundary_lhs(x, on_boundary):
 def boundary_rhs(x, on_boundary):
     return on_boundary and x[0] + atol > 1
 
-# bcs_u = [DirichletBC(V_u, uD_bot, boundary_bot),
-#          DirichletBC(V_u, uD_top, boundary_top),
-#          DirichletBC(V_u, uD_lhs, boundary_lhs),
-#          DirichletBC(V_u, uD_rhs, boundary_rhs)]
+class CornerBottomLeft(SubDomain):
+  def inside(self, x, on_boundary):
+    return near(x[0], 0.0, DOLFIN_EPS) and \
+           near(x[1], 0.0, DOLFIN_EPS)
 
-cppcode = "(x[0] < atol) ? (-ux) : (x[0] > L - atol ? (ux) : (0.0))"
-uxD = Expression(cppcode, ux=0.0, uy=0.0, L=1.0, H=1.0, atol=atol, degree=0)
+uxD_lhs = Expression('-s', s=0.0, degree=0)
+uxD_rhs = Expression(' s', s=0.0, degree=0)
+uyD_bot = Expression('-s', s=0.0, degree=0)
+uyD_top = Expression(' s', s=0.0, degree=0)
+uxD_lbc = Expression('-s', s=0.0, degree=0)
+uyD_lbc = Expression('-s', s=0.0, degree=0)
 
-cppcode = "(x[1] < atol) ? (-uy) : (x[1] > H - atol ? (uy) : (0.0))"
-uyD = Expression(cppcode, ux=0.0, uy=0.0, L=1.0, H=1.0, atol=atol, degree=0)
+bcs_u = [
+    DirichletBC(V_u.sub(0), uxD_lhs, boundary_lhs),
+    DirichletBC(V_u.sub(0), uxD_rhs, boundary_rhs),
+    DirichletBC(V_u.sub(1), uyD_bot, boundary_bot),
+    DirichletBC(V_u.sub(1), uyD_top, boundary_top),
+    # DirichletBC(V_u.sub(0), uxD_lbc, CornerBottomLeft(), method='pointwise'),
+    # DirichletBC(V_u.sub(1), uyD_lbc, CornerBottomLeft(), method='pointwise'),
+    ]
 
-V_ux, V_uy = V_u.split()
 
-# # TEMP
-# bcs_u = [DirichletBC(V_ux, uxD, 'on_boundary'),
-#          DirichletBC(V_uy, uyD, 'on_boundary'),]
+def scale_boundary_displacements(s):
+    '''To be called inside solution loop.'''
 
-# TEMP
-bcs_u = [DirichletBC(V_ux, uxD, boundary_lhs),
-         DirichletBC(V_uy, uyD, boundary_bot),
-         DirichletBC(V_ux, uxD, boundary_rhs),
-         DirichletBC(V_uy, uyD, boundary_top)]
-
-# # TEMP
-# bcs_u = [DirichletBC(V_ux, Constant(0.0), boundary_top),
-#          DirichletBC(V_uy, Constant(0.0), boundary_bot)]
+    uxD_lhs.s = s
+    uxD_rhs.s = s
+    uyD_bot.s = s
+    uyD_top.s = s
+    uxD_lbc.s = s
+    uyD_lbc.s = s
 
 
 ### Setup solver
@@ -227,7 +275,7 @@ u = Function(V_u, name="displacement")
 p = Function(V_p, name="phasefield") # phase-field
 
 dd = damage_density(p)
-mi = material_integrity(p, g0)
+mi = material_integrity(p, mi_0)
 rg = phasefield_regularization(p)
 
 material_model = material.NeoHookeanModel(u, material_parameters)
@@ -250,19 +298,11 @@ E = F.T*F - dolfin.Identity(len(u))
 J = dolfin.det(F)
 
 
-
-# Constraint equation
-constraint = (p - p_mean) * dx
-
 # Potential energy
 W_potential = mi * psi * dx
 
-# Phasefield regularization
-# W_penalty = (Gc * dd + k0 * rg + Mc* M(p)) * dx
-
-# W_penalty = 1 * dx(mesh_domain)
-# W_penalty = (J-1)**2 * dx
-W_penalty = k0 * rg * dx
+# Gradient penalization
+W_penalty = c_rg * rg * dx
 
 
 # High stress penalty
@@ -270,55 +310,100 @@ W_penalty = k0 * rg * dx
 
 # Total energy to be minimized
 W_cost = W_potential + W_penalty
-# W_cost = dolfin.dot(T, u)*ds + W_penalty # fails at boundary
 
 
 hist_energies_cost = []
+hist_energies_ratio = []
 hist_energies_penalty = []
 hist_energies_potential = []
 hist_constraint_equation = []
+hist_phasefield_fraction = []
 
-def record_iteration_state():
-    hist_energies_cost.append(assemble(W_cost))
-    hist_energies_penalty.append(assemble(W_penalty))
-    hist_energies_potential.append(assemble(W_potential))
-    hist_constraint_equation.append(assemble(constraint))
+def make_recorder_function():
+    k_itr = 0
 
-# p.vector()[p.vector() < 0.0] = 0.0
-# p.vector()[p.vector() > 0.0] = 1.0
+    def recorder_function():
+        nonlocal k_itr
 
-insert_defect_array([0.15, 0.85], [0.15, 0.85],
-                    3, 3, p, r=0.05, rtol=1e-9)
+        W_cost_k = assemble(W_cost)
+        W_penalty_k = assemble(W_penalty)
+        W_potential_k = assemble(W_potential)
 
-# optimization.pde_filter(p, p, 0.0001)
+        W_ratio_k = W_penalty_k/W_cost_k
 
-optimizer = optimization.TopologyOptimizer(
-    W_potential, W_cost, constraint, u, p, bcs_u, record_iteration_state)
+        hist_energies_cost.append(W_cost_k)
+        hist_energies_ratio.append(W_ratio_k)
+        hist_energies_penalty.append(W_penalty_k)
+        hist_energies_potential.append(W_potential_k)
+        hist_phasefield_fraction.append(assemble(p*dx))
 
-for s in target_extension_mangitude:
-    print(f'Solving for load increment {s:3.2f} ...')
+        if k_itr % 5 == 0:
+
+            # outfile_u << u
+            outfile_p << p
+
+            # outfile_u.write(u, k_itr)
+            # outfile_p.write(p, k_itr)
+
+        k_itr += 1
+
+    return recorder_function
+
+recorder_function = make_recorder_function()
+
+# insert_defect_array([0.35, 0.65], [0.35, 0.65], 2, 2, p, r=1/30, rtol=1e-9)
+insert_defect_array([  1/3,   2/3], [  1/3,   2/3], 2, 2, p, r=0.025, rtol=1e-9)
+
+# insert_defect_array([0.25, 0.75], [0.25, 0.75], 5, 5, p, r=0.025, rtol=1e-9)
+# insert_defect_array([0.0, 0.0], [0.5, 0.5], 1, 1, p, r=0.025, rtol=1e-9)
+# insert_defect_array([1.0, 1.0], [0.5, 0.5], 1, 1, p, r=0.025, rtol=1e-9)
+
+# optimization.filter.apply_diffusion_filter(p, kappa=c0_rg)
+
+# Sometimes filtering causes phasefield to be outside bounds
+# In this case,
+
+p_arr = p.vector().get_local()
+p_arr[p_arr < 0.0] = 0.0
+p_arr[p_arr > 1.0] = 1.0
+p.vector()[:] = p_arr
+
+
+optimizer = optimization.TopologyOptimizer_1(
+    W_potential, W_penalty, p, p_mean, u, bcs_u,
+    stabilizing_diffusivity, recorder_function)
+
+for s in target_external_loading_steps:
+    print(f'Solving for load increment {s:4.3f} ...')
     scale_boundary_displacements(s)
     optimizer.nonlinear_solver.solve()
 
+assert p.vector().min()+rtol > 0.0
+assert p.vector().max()-rtol < 1.0
+
+stepsize = 0.2
+
 t0 = time.time()
-for p_target in target_phasefield_fractions:
 
-    print(f'Solving for phasefield fraction {p_target:3.2f} ...')
+for p_mean_i in target_phasefield_values:
+    print(f'\n *** Solving for p_mean: {p_mean_i:4.3} *** \n')
 
-    p_mean.assign(p_target)
+    p_mean.assign(p_mean_i)
 
-    is_converged, error_number = optimizer.optimize(0.020, 0.020, 0.100)
-    if not is_converged and error_number == 1: break
+    k_itr, is_converged, error_reason = \
+        optimizer.optimize(stepsize)
 
-    is_converged, error_number = optimizer.optimize(0.010, 0.010, 0.100)
-    if not is_converged and error_number == 1: break
+    if not is_converged:
+        stepsize /= 2
 
 
-t1 = time.time()
-print('CPU TIME:', t1-t0)
+print('CPU TIME:', time.time()-t0)
+assert p.vector().min()+rtol > 0.0
+assert p.vector().max()-rtol < 1.0
 
-assert p.vector().min() + rtol > 0.0
-assert p.vector().max() - rtol < 1.0
+# Close output files
+if hasattr(outfile_u, 'close'): outfile_u.close()
+if hasattr(outfile_p, 'close'): outfile_p.close()
 
 
 if __name__ == "__main__":
@@ -338,9 +423,9 @@ if __name__ == "__main__":
 
     ### Plot solutions
 
-    def plot_energies():
+    def plot_energy_vs_iterations():
 
-        fh = plt.figure('energies')
+        fh = plt.figure('iterations')
         fh.clear()
 
         plt.plot(hist_energies_cost, '-r')
@@ -357,6 +442,60 @@ if __name__ == "__main__":
         plt.show()
 
 
+    def plot_ratio_energy_vs_iterations():
+
+        fh = plt.figure('energy ratio')
+        fh.clear()
+
+        plt.plot(hist_energies_ratio, '-xk')
+
+        plt.legend(['penalty fraction'])
+
+        plt.ylabel('Energy ratio')
+        plt.xlabel('Iteration number, #')
+        plt.title('Evolution of Energy Ratio')
+
+        fh.tight_layout()
+        plt.show()
+
+
+    def plot_energy_vs_phasefield():
+
+        EPS = 1e-12
+
+        fh = plt.figure('energies')
+        # fh.clear()
+
+        n = len(hist_phasefield_fraction)
+        d = np.diff(hist_phasefield_fraction)
+
+        ind = np.abs(d) > EPS
+        ind = np.flatnonzero(ind)
+
+        ind_first = (ind+1).tolist()
+        ind_first.insert(0,0)
+
+        ind_last = ind.tolist()
+        ind_last.append(n-1)
+
+        y_cost = np.array(hist_energies_cost)[ind_last]
+        y_penalty = np.array(hist_energies_penalty)[ind_last]
+        y_potential = np.array(hist_energies_potential)[ind_last]
+        x_phasefield = np.array(hist_phasefield_fraction)[ind_last]
+
+        plt.plot(x_phasefield, y_cost, '-r')
+        plt.plot(x_phasefield, y_penalty, '--b')
+        plt.plot(x_phasefield, y_potential, '-.g')
+
+        plt.legend(['cost', 'penalty', 'potential'])
+
+        plt.ylabel('Energy, W')
+        plt.xlabel('Phasefield fraction')
+        plt.title('Evolution of Energy')
+
+        fh.tight_layout()
+        plt.show()
+
     def plot_phasefiled():
 
         fh = plt.figure('phasefield')
@@ -370,20 +509,21 @@ if __name__ == "__main__":
         fh.tight_layout()
         plt.show()
 
-    def plot_constraint():
+    # def plot_constraint():
+    #
+    #     fh = plt.figure('constraint')
+    #     fh.clear()
+    #
+    #     plt.plot(x, hist_constraint_equation, '-k')
+    #
+    #     plt.ylabel('C')
+    #     plt.xlabel('Iteration number, #')
+    #     plt.title('Evolution of Constraint Residual')
+    #
+    #     fh.tight_layout()  # otherwise the right y-label is slightly clipped
+    #     plt.show()
 
-        fh = plt.figure('constraint')
-        fh.clear()
 
-        plt.plot(hist_constraint_equation, '-k')
-
-        plt.ylabel('C')
-        plt.xlabel('Iteration number, #')
-        plt.title('Evolution of Constraint Residual')
-
-        fh.tight_layout()  # otherwise the right y-label is slightly clipped
-        plt.show()
-
-    plot_energies()
+    plot_energy_vs_iterations()
+    plot_energy_vs_phasefield()
     plot_phasefiled()
-    plot_constraint()

@@ -4,21 +4,14 @@ By Danas Sutula
 
 '''
 
+
 parameters_topology_solver = {
-    'absolute_tolerance_energy': 1e-5,
-    'absolute_tolerance_constraint': 1e-14,
-    'relative_tolerance_phasefield': 1e-5,
+    'absolute_tolerance_energy': 1e-4,
+    'absolute_tolerance_constraint': 1e-12,
+    'relative_tolerance_phasefield': 5e-3,
     'maximum_iterations': 500,
     'maximum_diverged': 3,
-    'maximum_stepsize': 0.10,
-    'minimum_stepsize': 0.00,
-    'initial_stepsize': 0.10,
     'error_on_nonconvergence': False,
-    'stepsize_increase_factor': 2.0,
-    'stepsize_decrease_factor': 0.5,
-    'coarsening_delta_angle': 15.0,
-    'refinement_delta_angle': 75.0,
-    'write_solutions': True,
     }
 
 parameters_nonlinear_solver = {
@@ -29,7 +22,7 @@ parameters_nonlinear_solver = {
     'newton_solver': {
         'absolute_tolerance': 1e-7,
         'convergence_criterion': 'residual',
-        'error_on_nonconvergence': False,
+        'error_on_nonconvergence': True,
         'linear_solver': 'default',
         'maximum_iterations': 25,
         'preconditioner': 'default',
@@ -39,7 +32,7 @@ parameters_nonlinear_solver = {
         },
     'snes_solver' : {
         'absolute_tolerance': 1e-7,
-        'error_on_nonconvergence': False,
+        'error_on_nonconvergence': True,
         'line_search': 'bt', # 'basic' | 'bt'
         'linear_solver': 'lu',
         'maximum_iterations': 25,
@@ -53,7 +46,7 @@ parameters_nonlinear_solver = {
         },
     }
 
-parameters_adjoint_solver = {
+parameters_linear_solver = {
     'linear_solver': 'default',
     'preconditioner': 'default',
     'symmetric': True,

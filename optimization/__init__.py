@@ -1,9 +1,7 @@
 
-from .config import parameters_adjoint_solver
-from .config import parameters_nonlinear_solver
-from .config import parameters_topology_solver
+from . import config
+from . import filter
+from . import utility
 
-from .optim import ERROR_ENUMERATION
-from .optim import ERROR_NUMBER_TO_NAME
-from .optim import TopologyOptimizer
-from .optim import pde_filter
+from .optim_adjoint import TopologyOptimizer as TopologyOptimizer_1
+from .optim_direct  import TopologyOptimizer as TopologyOptimizer_2
