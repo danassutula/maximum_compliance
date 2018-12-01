@@ -72,10 +72,10 @@ DEGREES_TO_RADIANS =  PI / 180.0
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
-    def __init__(self, W, P, p, p_mean, u, bcs_u, diffusivity=None,
+    def __init__(self, W, P, p, p_mean, u, bcs_u, kappa=None,
         iteration_state_recording_function = lambda: None):
         '''
-        diffusivity (float or dolfin.Constant): Diffusion-like coefficient for
+        kappa (float or dolfin.Constant): Diffusion-like coefficient for
             spatially smoothing out the cost gradient.
 
         W (dolfin.Form) : Potential energy to be minimized.
@@ -96,14 +96,14 @@ class TopologyOptimizer:
 
         # Diffusion-like constant for spatially smoothing
         # discrete (nodal) phasefield dissipation rates
-        if not isinstance(diffusivity, dolfin.Constant):
-            if diffusivity is None: diffusivity = 0.0
-            else: diffusivity = float(diffusivity)
-            diffusivity = dolfin.Constant(diffusivity)
+        if not isinstance(kappa, dolfin.Constant):
+            if kappa is None: kappa = 0.0
+            else: kappa = float(kappa)
+            kappa = dolfin.Constant(kappa)
 
-        self._diffusivity = diffusivity
+        self._kappa = kappa
 
-        # Energy gradient as function (will need filtering)
+        # Generic function that will be passed to a filter
         self._g = g = dolfin.Function(p.function_space())
 
         # Adjoint variable for computing cost sensitivity
@@ -115,9 +115,9 @@ class TopologyOptimizer:
         # Phasefield constraint
         C = (p - p_mean) * dolfin.dx
 
-        # TODO
-        # Constraint relative amount of phasefield diffusion
-        C2 = (dolfin.grad(p)**2 - Constant(0.1)*p_mean) * dolfin.dx
+        # Determine domain volume: \int_{Omega} 1 dx
+        self._domain_volume = assemble(1*dolfin.dx(
+            self._p.function_space().mesh()))
 
         # Total cost
         J = W + P
@@ -135,8 +135,7 @@ class TopologyOptimizer:
         dPdu = dolfin.derivative(P, u)
         dCdp = dolfin.derivative(C, p)
 
-        dJdu = dPdu # NOTE: Disregard `dWdu` (`F`)
-        # because it will vanish for any solution
+        dJdu = dPdu # NOTE: F(u)[du] = 0
 
         # Total cost dissipation with respect to phasefield
         self._dJdp = dJdp - dolfin.action(dolfin.adjoint(dFdp), z)
@@ -147,7 +146,7 @@ class TopologyOptimizer:
 
         self.adjoint_solver = dolfin.LinearVariationalSolver(adjoint_problem)
         self.nonlinear_solver = dolfin.NonlinearVariationalSolver(nonlinear_problem)
-        self.diffusion_filter = filter.make_diffusion_filter(g, diffusivity)
+        self.diffusion_filter = filter.make_diffusion_filter(g, kappa)
 
         utility.update_parameters(self.adjoint_solver.parameters, config.parameters_linear_solver)
         utility.update_parameters(self.nonlinear_solver.parameters, config.parameters_nonlinear_solver)
@@ -161,22 +160,30 @@ class TopologyOptimizer:
         self.record_iteration_state = iteration_state_recording_function
 
 
-    def optimize(self, stepsize, rtol=None, nmax=None):
-
-        prm = self.parameters_topology_solver
-
-        atol_J = prm['absolute_tolerance_energy']
-        atol_C = prm['absolute_tolerance_constraint']
-        rtol_p = prm['relative_tolerance_phasefield']
-
-        maximum_iterations = prm['maximum_iterations']
-        maximum_diverged   = prm['maximum_diverged']
+    def optimize(self, stepsize, solution_tolerance=None,
+            maximum_iterations=None, maximum_diverged=None):
 
         if stepsize <= 0.0:
             raise ValueError('Require positive `stepsize`')
 
-        # Diffusion value for cost gradient smoothing
-        diffusivity = float(self._diffusivity.values())
+        prm = self.parameters_topology_solver
+
+        if solution_tolerance is None:
+            solution_tolerance = prm['solution_tolerance']
+
+        if maximum_iterations is None:
+            maximum_iterations = prm['maximum_iterations']
+
+        if maximum_diverged is None:
+            maximum_diverged = prm['maximum_diverged']
+
+        rtol = prm['relative_tolerance']
+
+        # Constraint tolerance wrt mean phasefield amount
+        ctol = rtol * float(self._p_mean) * self._domain_volume
+
+        # Whether to do cost gradient smoothing
+        require_smoothing = bool(self._kappa.values())
 
         # W_val_prv = np.inf
         J_val_prv = np.inf
@@ -219,9 +226,8 @@ class TopologyOptimizer:
             dJdp_arr = assemble(self._dJdp).get_local()
             dCdp_arr = assemble(self._dCdp).get_local()
 
-            if diffusivity:
-                w_arr = filter.weight(p_arr)
-                g_vec[:] = w_arr * dJdp_arr
+            if require_smoothing:
+                g_vec[:] = dJdp_arr
                 self.diffusion_filter.apply()
                 dJdp_arr = g_vec.get_local()
 
@@ -231,8 +237,7 @@ class TopologyOptimizer:
 
             ### Check convergence
 
-            if J_val_prv < J_val + atol_J and \
-              abs(C_val_prv) < abs(C_val) + atol_C:
+            if J_val_prv < J_val and abs(C_val_prv) < abs(C_val) + ctol:
                 print('\nWARNING: Iteration diverged\n')
                 if num_diverged == maximum_diverged:
                     print('\nERROR: Reached maximum times diverged\n')
@@ -280,29 +285,21 @@ class TopologyOptimizer:
 
             # `dp_arr` correction vector
             dp_aux = np.ones_like(dp_arr)
+            dCdp_aux = dCdp_arr.dot(dp_aux)
 
-            dot_dCdp_dp_aux = dCdp_arr.dot(dp_aux)
+            while dCdp_aux:
 
-            while dot_dCdp_dp_aux:
+                # Solve residual equation for `dp_arr` correction
+                dp_aux *= -(C_val + dCdp_arr.dot(dp_arr)) / dCdp_aux
 
-                # Solve residual equation for correctional scale factor
-                # C + \grad C \dot [\delta p + \delta p_aux scale] = 0
-                # Apply scale factor on the correctional change dp_aux
-
-                dp_aux *= -(C_val + dCdp_arr.dot(dp_arr)) / dot_dCdp_dp_aux
-                # scale = math.sqrt(dp_arr.dot(dp_arr) / dp_aux.dot(dp_aux))
-
-                # Aim for |dp_aux| <= |dp_arr|
-                # if scale < 1.0: dp_aux *= scale
-
-                # Apply correction
+                # Superpose correction
                 p_arr += dp_aux
 
                 mask_lwr = p_arr < 0.0
                 mask_upr = p_arr > 1.0
 
+                # Enforce phasefield constraints
                 if np.any(mask_upr) or np.any(mask_lwr):
-                    # Enforce phasefield constraints
 
                     p_arr[mask_lwr] = 0.0
                     p_arr[mask_upr] = 1.0
@@ -313,11 +310,11 @@ class TopologyOptimizer:
                     dp_arr = p_arr - p_arr_prv
 
                 else:
-                    # Constraints enforced
+
                     dp_arr += dp_aux
                     break
 
-                dot_dCdp_dp_aux = dCdp_arr.dot(dp_aux)
+                dCdp_aux = dCdp_arr.dot(dp_aux)
 
             else:
                 raise RuntimeError('Can not enforce equality constraint')
@@ -332,8 +329,8 @@ class TopologyOptimizer:
 
             ### Convergence assessment
 
-            if abs(C_val) > atol_C:
-                # assert np.all(p_arr>=0)
+            if abs(C_val) < ctol:
+                # assert np.all(p_arr >= 0)
                 normL1_p = p_arr.sum()
 
             normL1_dp = np.abs(dp_arr).sum()
@@ -351,46 +348,12 @@ class TopologyOptimizer:
             assert p_arr.min() > PHASEFIELD_LOWER_BOUND
             assert p_arr.max() < PHASEFIELD_UPPER_BOUND
 
-            if rchange_p < rtol_p:
+            if rchange_p < solution_tolerance:
                 print('INFO: Negligible phase-field change (break)')
                 is_converged = True # Should not update `p_vec`
                 break
 
             p_vec[:] = p_arr
-
-
-            ### Adapt phasefield stepsize
-
-            # if cossim < cossim_refinement \
-            #     and stepsize > stepsize_min + EPS:
-            #     stepsize *= stepsize_decrease_factor
-            #
-            #     if stepsize > stepsize_min:
-            #         print('INFO: Decrease step-size')
-            #         # dp_arr *= stepsize_decrease_factor
-            #
-            #     else:
-            #         print('INFO: Setting minimum step-size.')
-            #         stepsize /= stepsize_decrease_factor
-            #         # scaler = stepsize_min / stepsize
-            #         stepsize = stepsize_min
-            #         # dp_arr *= scaler
-            #
-            # elif cossim > cossim_coarsening \
-            #     and stepsize < stepsize_max - EPS:
-            #     stepsize *= stepsize_increase_factor
-            #
-            #     if stepsize < stepsize_max:
-            #         print('INFO: Increase step-size.')
-            #         # dp_arr *= stepsize_increase_factor
-            #
-            #     else:
-            #         print('INFO: Setting maximum step-size.')
-            #         stepsize /= stepsize_increase_factor
-            #         # scaler = stepsize_max / stepsize
-            #         stepsize = stepsize_max
-            #         # dp_arr *= scaler
-
 
         else:
 
@@ -408,18 +371,18 @@ class TopologyOptimizer:
 
 
     @property
-    def diffusivity(self):
+    def kappa(self):
         '''Diffusion filter parameter.'''
-        return float(self._diffusivity.values())
+        return float(self._kappa.values())
 
     @property
     def p_mean(self):
         '''Diffusion filter parameter.'''
         return float(self._p_mean.values())
 
-    @diffusivity.setter
-    def diffusivity(self, value):
-        self._diffusivity.assign(float(value))
+    @kappa.setter
+    def kappa(self, value):
+        self._kappa.assign(float(value))
 
     @p_mean.setter
     def p_mean(self, value):

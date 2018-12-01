@@ -34,6 +34,10 @@ def weight(x, bump_alpha=10):
     return 1.0
 
 
+def find_phasefield_countour():
+    pass
+
+
 def apply_diffusion_filter(fn, kappa):
     '''One-time application of the diffusion filter.'''
 
