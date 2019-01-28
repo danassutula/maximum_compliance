@@ -34,16 +34,12 @@ def weight(x, bump_alpha=10):
     return 1.0
 
 
-def find_phasefield_countour():
-    pass
-
-
 def apply_diffusion_filter(fn, kappa):
     '''One-time application of the diffusion filter.'''
 
     diffusion_filter = filter.make_diffusion_filter(fn, kappa)
 
-    utility.update_parameters(
+    utility.update_lhs_parameters_from_rhs(
         diffusion_filter.parameters,
         config.parameters_linear_solver)
 
@@ -55,7 +51,7 @@ def diffusion_filter_weakform(fn, kappa):
     '''Return the variational form of the diffusion filter problem.
 
     Parameters
-    ==========
+    ----------
     fn (dolfin.Function): Function to be smoothed (in-place)
     kappa (dolfin.Constant):Filter diffusivity constant.
 
@@ -86,30 +82,32 @@ def make_diffusion_filter(fn, kappa):
     '''As a minimization problem.
 
     Parameters
-    ==========
-    fn (dolfin.Function): Function to be smoothed (in-place)
-    kappa (dolfin.Constant):Filter diffusivity constant.
+    ----------
+    fn : dolfin.Function
+        Function to be smoothed (in-place)
+    kappa : dolfin.Constant
+        Filter diffusivity constant.
 
     Important
-    =========
+    ---------
     Aim to do as little smoothing as possible -- just enough to eliminate
     element-level oscillations in the total cost dissipation vector.
 
-    `fn` is a `dolfin.Function` that will be filtered (smoothed) by calling
-    the `solve()` method of the returned `dolfin.VariationalLinearSolver` object.
+    `fn` is a `dolfin.Function` that will be filtered (smoothed) by calling the
+    `solve()` method of the returned `dolfin.VariationalLinearSolver` instance.
 
     For a given rough solution f0, find the smooth solution p that minimizes:
         J := 1/2 * ((f-f0)**2 + kappa*grad(f)**2) * dx
 
-    The minimization problem is solved by solving the associated stationary
-    (variational) problem:
+    The solution to the minimization problem is the solution to the associated
+    stationary (variational) problem defined as:
         F := dJdp = 0
 
     No boundary conditions are required for the solution.
 
     Returns
-    =======
-    dolfin.LinearVariationalSolver : Call method `solve()` to do filtering
+    -------
+    dolfin.LinearVariationalSolver
 
     '''
 

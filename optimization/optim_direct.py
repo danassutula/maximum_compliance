@@ -45,6 +45,9 @@ DEGREES_TO_RADIANS = math.pi / 180.0
 ITERATION_OUTFILE_NAME_U = "u"
 ITERATION_OUTFILE_NAME_P = "p"
 
+# TODO:
+# form_compiler_parameters = []
+
 
 def phasefield_filter(p, k0):
     '''As a minimization problem.
@@ -155,8 +158,8 @@ class TopologyOptimizer:
         phasefield_problem = dolfin.LinearVariationalProblem(a, L, p, bcs=None)
         self.phasefield_solver = dolfin.LinearVariationalSolver(phasefield_problem)
 
-        update_parameters(self.nonlinear_solver.parameters, parameters_nonlinear_solver)
-        update_parameters(self.phasefield_solver.parameters, parameters_linear_solver)
+        update_lhs_parameters_from_rhs(self.nonlinear_solver.parameters, parameters_nonlinear_solver)
+        update_lhs_parameters_from_rhs(self.phasefield_solver.parameters, parameters_linear_solver)
 
         self.parameters_nonlinear_solver = self.nonlinear_solver.parameters
         self.parameters_linear_solver = self.phasefield_solver.parameters
@@ -184,8 +187,8 @@ class TopologyOptimizer:
         write_solutions          = prm['write_solutions']
 
         atol_W = prm['absolute_tolerance_energy']
-        atol_C = prm['absolute_tolerance_constraint']
-        rtol_p = prm['relative_tolerance_phasefield']
+        atol_C = prm['constraint_tolerance']
+        rtol_p = prm['phasefield_tolerance']
 
         if write_solutions:
             if not self._iteration_outfile_u or not self._iteration_outfile_p:
@@ -475,25 +478,20 @@ class TopologyOptimizer:
         self._k0.assign(float(value))
 
 
-def update_parameters(lhs, rhs):
-    '''Update values of keys in dict-like `lhs` with the values of those keys
-    in dict-like `rhs`. `lhs` and `rhs` must both have `keys` attribute.'''
+def update_lhs_parameters_from_rhs(lhs, rhs):
+    '''Recursively update values of dict-like `lhs` with those in `rhs`.'''
 
-    assert hasattr(lhs, 'keys')
-    assert hasattr(rhs, 'keys')
+    for k in rhs.keys():
 
-    for k in rhs:
-
-        if k not in lhs:
-            # Use traceback to query `lhs`
-            raise KeyError(k)
+        if k not in lhs.keys():
+            raise KeyError(k) # NOTE: `k` in `rhs.keys()` is not in `lhs.keys()`
 
         if hasattr(lhs[k], 'keys'):
 
             if not hasattr(rhs[k], 'keys'):
                 raise TypeError(f'`rhs[{k}]` must be dict-like.')
             else:
-                update_parameters(lhs[k], rhs[k])
+                update_lhs_parameters_from_rhs(lhs[k], rhs[k])
 
         elif hasattr(rhs[k], 'keys'):
             raise TypeError(f'`rhs[{k}]` can not be dict-like.')

@@ -4,6 +4,7 @@ import numpy as np
 # Extensions of files that are allowed to be deleted
 FILE_EXTENSIONS = ['.pvd', '.vtu', '.h5', '.xdmf']
 
+
 def cleanup_filepath(filepath):
     '''Clean up file path. If file directory does not exist, it is created;
     otherwise, if directory already exists, any existing files are removed.
@@ -50,13 +51,29 @@ def insert_defect(p, xc, r, rtol):
 
 def insert_defect_array(xlim, ylim, n, m, p, r, rtol):
 
-    x, y = np.meshgrid(
-        np.linspace(xlim[0], xlim[1], n),
-        np.linspace(ylim[0], ylim[1], m)
-        )
+    x = np.linspace(xlim[0], xlim[1], n)
+    y = np.linspace(ylim[0], ylim[1], m)
+
+    x, y = np.meshgrid(x, y)
 
     x = x.reshape((-1,))
     y = y.reshape((-1,))
 
     for xc in np.stack([x,y], axis=1):
         insert_defect(p, xc, r, rtol)
+
+
+def insert_defect_array_with_checker_pattern(xlim, ylim, n, m, p, r, rtol):
+
+    insert_defect_array(xlim, ylim, n, m, p, r, rtol)
+
+    dx = (xlim[1] - xlim[0]) / (n-1)
+    dy = (ylim[1] - ylim[0]) / (m-1)
+
+    xlim = [xlim[0] + 0.5*dx, xlim[1] - 0.5*dx]
+    ylim = [ylim[0] + 0.5*dy, ylim[1] - 0.5*dy]
+
+    n -= 1
+    m -= 1
+
+    insert_defect_array(xlim, ylim, n, m, p, r, rtol)
