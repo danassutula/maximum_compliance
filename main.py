@@ -133,13 +133,14 @@ def material_integrity(p, mi_min):
 ### Model Parameters
 
 # Energy gradient diffusion constant
-penalty_parameter      = gamma   = Constant(5e-5)
-filtering_diffusivity  = kappa   = Constant(5e-5)
-filtering_diffusivity  = kappa_2 = Constant(1e-3)
+penalty_parameter      = gamma   = Constant(1e-5)
+filtering_diffusivity  = kappa_W = Constant(1e-5)
+filtering_diffusivity  = kappa_P = Constant(0e-5)
+filtering_diffusivity  = kappa_p = Constant(1e-4)
 material_integrity_min = mi_min  = Constant(0.01)
 
 external_loading_values = np.linspace(0, 0.1, 2)[1:]
-target_phasefield_values = np.linspace(0.0, 0.05, 25)
+target_phasefield_values = np.linspace(0.0, 0.05, 10)
 
 material_parameters = {
     'E': Constant(1.0),
@@ -300,7 +301,7 @@ class KinematicQuantities:
 potential = mi * psi * dx
 
 # Phasefield regularization
-penalty = gamma * phi * dx
+penalty = phi * dx
 
 # Total energy to be minimized
 cost = potential + penalty
@@ -327,7 +328,7 @@ def make_recorder_function():
         hist_potential.append(assemble(potential))
         hist_phasefield.append(float(p_mean.values()))
 
-        if k_itr % 5 == 0 or insist:
+        if k_itr % 1 == 0 or insist:
 
             # outfile_u << u
             outfile_p << p
@@ -383,8 +384,8 @@ p.assign(sum(ps))
 ### Define phasefield optimizer
 
 optimizer = optimization.TopologyOptimizer(
-    cost, potential, constraint, p, ps, u,
-    bcs_u, kappa, kappa_2, recorder_function)
+    potential, penalty, constraint, p, ps, u, bcs_u,
+    kappa_W, kappa_P, kappa_p, recorder_function)
 
 
 for s in external_loading_values:

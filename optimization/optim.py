@@ -89,13 +89,14 @@ DEGREES_TO_RADIANS =  PI / 180.0
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
-    def __init__(self, J, W, C, p, ps, u, bcs_u, kappa_J=0.0, kappa_p=0.0,
-        iteration_state_recording_function = lambda: None):
+    def __init__(self, W, P, C, p, ps, u, bcs_u,
+                 kappa_W=0.0, kappa_P=0.0, kappa_p=0.0,
+                 recorder_function = lambda: None):
         '''
 
         Parameters
         ----------
-        J : dolfin.Form
+        W : dolfin.Form
             Cost functional to be minimized.
         W : dolfin.Form
             Potential energy to be minimized.
@@ -104,7 +105,7 @@ class TopologyOptimizer:
             independent of `u`.
         D : dolfin.Form
             Filter problem.
-        kappa_J : float or dolfin.Constant (optional)
+        kappa : float or dolfin.Constant (optional)
             Diffusion-like coefficient for smoothing the cost gradient.
 
         '''
@@ -136,11 +137,15 @@ class TopologyOptimizer:
         # Diffusion-like constant for the filter
         self._kappa = dolfin.Constant(0.0)
 
-        self.kappa_J = kappa_J
+        self.kappa_W = kappa_W
+        self.kappa_P = kappa_P
         self.kappa_p = kappa_p
 
-        self._J = J
-        self._dJdp = dolfin.derivative(J, p)
+        self._W = W
+        self._P = P
+
+        self._dWdp = dolfin.derivative(W, p)
+        self._dPdp = dolfin.derivative(P, p)
 
         if isinstance(C, (list, tuple)):
             self._C = C if isinstance(C, tuple) else tuple(C)
@@ -164,8 +169,10 @@ class TopologyOptimizer:
             self.diffusion_filter.parameters,
             config.parameters_linear_solver)
 
-        self.parameters_topology_solver = config.parameters_topology_solver.copy()
-        self.record_iteration_state = iteration_state_recording_function
+        self.parameters_topology_solver = \
+            config.parameters_topology_solver.copy()
+
+        self.recorder_function = recorder_function
 
     def optimize(self, stepsize, phasefield_tolerance=None,
         maximum_divergences=None, maximum_iterations=None):
@@ -189,7 +196,7 @@ class TopologyOptimizer:
                   for dCdp_i in self._dCdp]
 
         # Flag for cost gradient smoothing
-        require_filtering = bool(self.kappa_J)
+        require_filtering = bool(self.kappa_W)
 
         p_vec = self._p.vector()
         f_vec = self._f.vector()
@@ -197,7 +204,7 @@ class TopologyOptimizer:
         p_arr = p_vec.get_local()
         dp_arr = p_arr.copy()
 
-        J_val_prv = np.inf
+        W_val_prv = np.inf
         normL2_dp = np.inf
 
         ps_vec = [p_i.vector() for p_i in self._ps]
@@ -215,27 +222,33 @@ class TopologyOptimizer:
 
         for k_itr in range(maximum_iterations):
 
-            J_val = assemble(self._J)
-            dJdp_arr = assemble(self._dJdp).get_local()
+            W_val = assemble(self._W)
+
+            dWdp_arr = assemble(self._dWdp).get_local()
+            dPdp_arr = assemble(self._dPdp).get_local()
 
             C_val = [assemble(C_i) for C_i in self._C]
             dCdp_arr = [assemble(dCdp_i).get_local() for dCdp_i in self._dCdp]
 
             if require_filtering:
 
-                f_vec[:] = dJdp_arr
-
-                self._kappa.assign(self.kappa_J)
+                f_vec[:] = dWdp_arr
+                self._kappa.assign(self.kappa_W)
                 self.diffusion_filter.apply()
-                dJdp_arr = f_vec.get_local()
+                dWdp_arr = f_vec.get_local()
 
-            # User-defined recorder function
-            self.record_iteration_state()
+                f_vec[:] = dPdp_arr
+                self._kappa.assign(self.kappa_P)
+                self.diffusion_filter.apply()
+                dPdp_arr = f_vec.get_local()
+
+            # User-defined recorder
+            self.recorder_function()
 
 
             ### Check convergence
 
-            if J_val_prv < J_val and all(abs(C_val_i) < atol_C_i
+            if W_val_prv < W_val and all(abs(C_val_i) < atol_C_i
                 for C_val_i, atol_C_i in zip(C_val, atol_C)):
 
                 print('INFO: Iteration diverged.')
@@ -246,7 +259,7 @@ class TopologyOptimizer:
                     divergences_count = 0
                     stepsize /= 2.0
 
-            J_val_prv  = J_val
+            W_val_prv  = W_val
             p_arr_prv  = p_arr
             dp_arr_prv = dp_arr
 
@@ -256,9 +269,14 @@ class TopologyOptimizer:
             # Compute nodal phasefield change `dp_arr`
             # such that norm(dp_arr, inf) -> stepsize
 
-            dJdp_max = np.abs(dJdp_arr).max() + EPS
-            dp_arr = dJdp_arr * (-stepsize / dJdp_max)
+            dWdp_max = np.abs(dWdp_arr).max() + EPS
+            dp_arr_W = dWdp_arr * (-stepsize / dWdp_max)
 
+            dPdp_max = np.abs(dPdp_arr).max() + EPS
+            dp_arr_P = dPdp_arr * (-stepsize / dPdp_max)
+
+            dp_arr = (dp_arr_W + dp_arr_P * 0.01)
+            dp_arr /= np.abs(dp_arr).max()
             p_arr = p_arr + dp_arr
 
 
@@ -298,7 +316,7 @@ class TopologyOptimizer:
 
             ### Find competing phasefields
 
-            phasefield_competition_threshold = 0.01
+            phasefield_competition_threshold = 0.0001
 
             competing_phasefields_count = np.count_nonzero(
                 ws_arr > phasefield_competition_threshold, axis=1)
@@ -381,10 +399,8 @@ class TopologyOptimizer:
 
             for p_vec_i, mask_i in zip(ps_vec, mask_active.T):
 
-                mask_i = mask_active[:,i]
-                p_arr_i = np.zeros(p_arr.shape)
+                p_arr_i = np.zeros((len(p_arr),))
                 p_arr_i[mask_i] = p_arr[mask_i]
-
                 p_vec_i[:] = p_arr_i
 
 
@@ -403,7 +419,7 @@ class TopologyOptimizer:
 
             print('INFO: '
                   f'k:{k_itr:3d}, '
-                  f'J:{J_val: 11.5e}, '
+                  f'W:{W_val: 11.5e}, '
                   f'C:{np.abs(C_val).max(): 9.3e}, '
                   f'|dp|/|p|:{phasefield_change: 8.2e}, '
                   f'cossim_dp:{cossim_dp: 0.3f}, '
