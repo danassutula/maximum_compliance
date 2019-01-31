@@ -133,11 +133,13 @@ def material_integrity(p, mi_min):
 ### Model Parameters
 
 # Energy gradient diffusion constant
-filtering_diffusivity = kappa = Constant(1e-4)
-material_integrity_min = mi_min = Constant(0.01)
+penalty_parameter      = gamma   = Constant(5e-5)
+filtering_diffusivity  = kappa   = Constant(5e-5)
+filtering_diffusivity  = kappa_2 = Constant(1e-3)
+material_integrity_min = mi_min  = Constant(0.01)
 
 external_loading_values = np.linspace(0, 0.1, 2)[1:]
-target_phasefield_values = np.linspace(0.0, 0.1, 2)[1:]
+target_phasefield_values = np.linspace(0.0, 0.05, 25)
 
 material_parameters = {
     'E': Constant(1.0),
@@ -150,7 +152,8 @@ p_mean = Constant(0.0)
 
 ### Mesh
 
-nx = ny = 100 # number of elements
+nx = ny = 200 # number of elements
+# mesh_pattern = "left"
 mesh_pattern = "left/right"
 
 mesh = UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
@@ -296,14 +299,11 @@ class KinematicQuantities:
 # Potential energy
 potential = mi * psi * dx
 
-# Potential energy over domain of interest
-potential_phs = mi * psi * dx
-
 # Phasefield regularization
-penalty_phs = filtering_diffusivity * phi * dx
+penalty = gamma * phi * dx
 
 # Total energy to be minimized
-cost = potential_phs + penalty_phs
+cost = potential + penalty
 
 # Material fraction constraint(s)
 constraint = (p - p_mean) * dx
@@ -323,11 +323,11 @@ def make_recorder_function():
         nonlocal k_itr
 
         hist_cost.append(assemble(cost))
-        hist_penalty.append(assemble(penalty_phs))
+        hist_penalty.append(assemble(penalty))
         hist_potential.append(assemble(potential))
         hist_phasefield.append(float(p_mean.values()))
 
-        if k_itr % 10 == 0 or insist:
+        if k_itr % 5 == 0 or insist:
 
             # outfile_u << u
             outfile_p << p
@@ -348,13 +348,17 @@ recorder_function, recorder_checkpoints = make_recorder_function()
 
 p0 = Function(V_p)
 p1 = Function(V_p)
+p2 = Function(V_p)
+p3 = Function(V_p)
 
-utility.insert_defect(p0, [ 0.25, 0.5], r=0.050, rtol=1e-9)
-utility.insert_defect(p1, [ 0.75, 0.5], r=0.050, rtol=1e-9)
+utility.insert_defect(p0, [ 0.35, 0.5], r=0.050, rtol=1e-9)
+utility.insert_defect(p1, [ 0.65, 0.5], r=0.050, rtol=1e-9)
 
-p.assign(p0+p1)
+# utility.insert_defect(p2, [ 0.25, 0.25], r=0.050, rtol=1e-9)
+# utility.insert_defect(p3, [ 0.75, 0.75], r=0.050, rtol=1e-9)
 
-import ipdb; ipdb.set_trace()
+ps = [p0, p1]
+
 # utility.insert_defect_array(
 #     [ 0, 1], [   0,   1], 4, 4, p, r=0.025, rtol=1e-9)
 # utility.insert_defect_array_with_checker_pattern(
@@ -366,20 +370,22 @@ import ipdb; ipdb.set_trace()
 #     [ 0, 1], [ 0, 1], 2, 2, p, r=0.025, rtol=1e-9)
 
 # Apply diffusion filter to smooth out initial (sharp) phasefield
-# optimization.filter.apply_diffusion_filter(p, filtering_diffusivity)
+for p_i in ps:
+    optimization.filter.apply_diffusion_filter(p_i, penalty_parameter)
 
-# # Enforce phasefield bounds
-# p_arr = p.vector().get_local()
-# p_arr[p_arr < 0.0] = 0.0
-# p_arr[p_arr > 1.0] = 1.0
-# p.vector()[:] = p_arr
+    # a = p.vector().get_local()
+    # assert np.all(a >= 0.0)
+    # assert np.all(a <= 1.0)
+
+p.assign(sum(ps))
 
 
 ### Define phasefield optimizer
 
 optimizer = optimization.TopologyOptimizer(
-    cost, potential, constraint, p, u, bcs_u,
-    filtering_diffusivity, recorder_function, ps)
+    cost, potential, constraint, p, ps, u,
+    bcs_u, kappa, kappa_2, recorder_function)
+
 
 for s in external_loading_values:
     print(f'Solving for load increment {s:4.3f} ...')
@@ -391,6 +397,10 @@ assert p.vector().max()-rtol < 1.0
 
 phasefield_stepsize = 0.1
 solver_iterations_count = 0
+
+
+p_mean_0 = assemble(p*dx) / assemble(1*dx(mesh))
+target_phasefield_values += p_mean_0
 
 t0 = time.time()
 for p_mean_i in target_phasefield_values:

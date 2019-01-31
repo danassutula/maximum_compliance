@@ -62,8 +62,8 @@ def diffusion_filter_weakform(fn, kappa):
               '`dolfin.Constant` (doing type conversion)')
         kappa = dolfin.Constant(kappa)
 
-    if float(kappa.values()) < 0:
-        raise ValueError('Require kappa > 0')
+    # if float(kappa.values()) < 0:
+    #     raise ValueError('Require kappa > 0')
 
     dx = dolfin.dx
     dot = dolfin.dot

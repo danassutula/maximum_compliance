@@ -63,6 +63,11 @@ import dolfin
 import numpy as np
 
 from dolfin import assemble
+from dolfin import project
+
+# TEMP
+import matplotlib.pyplot as plt
+plt.interactive(True)
 
 from . import config
 from . import filter
@@ -78,13 +83,14 @@ DEGREES_TO_RADIANS =  PI / 180.0
 # TODO:
 # form_compiler_parameters = []
 
+# NOTE: Assigning a vector rather than array is significantly faster
+
 
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
-    def __init__(self, J, W, C, p, u, bcs_u, kappa=0.0,
-        iteration_state_recording_function = lambda: None,
-        phasefields=None):
+    def __init__(self, J, W, C, p, ps, u, bcs_u, kappa_J=0.0, kappa_p=0.0,
+        iteration_state_recording_function = lambda: None):
         '''
 
         Parameters
@@ -98,27 +104,40 @@ class TopologyOptimizer:
             independent of `u`.
         D : dolfin.Form
             Filter problem.
-        kappa : float or dolfin.Constant (optional)
+        kappa_J : float or dolfin.Constant (optional)
             Diffusion-like coefficient for smoothing the cost gradient.
 
         '''
 
-        # TEMP
-        self._phasefields = phasefields
-        self._phasefields_velocity_expr = [grad(p_i)**2 for p_i in phasefields]
+        # Sequence of local phasefields
+        if isinstance(ps, (list, tuple)) and all(
+           isinstance(ps_i, dolfin.Function) for ps_i in ps):
+            self._ps = ps if isinstance(ps, tuple) else tuple(ps)
 
-        # Phasefield
+        elif isinstance(ps, dolfin.Function):
+            self._ps = (ps,)
+
+        else:
+            raise TypeError('Parameter `ps` is neither a `dolfin.Function` '
+                            'nor a sequence of `dolfin.Function`s.')
+
+        # Global phasefield
+        p.assign(sum(ps))
+
+        if np.any(p.vector() < PHASEFIELD_LOWER_BOUND): raise ValueError
+        if np.any(p.vector() > PHASEFIELD_UPPER_BOUND): raise ValueError
+
         self._p = p
-
-        # Displacements
         self._u = u
 
-        # Generic function to be passed to a filter
+        # Function to be passed to a diffusion filter
         self._f = dolfin.Function(p.function_space())
 
-        # Diffusion-like constant for smoothing nodal dissipation
-        self._kappa = kappa if isinstance(kappa, dolfin.Constant) \
-                            else dolfin.Constant(kappa)
+        # Diffusion-like constant for the filter
+        self._kappa = dolfin.Constant(0.0)
+
+        self.kappa_J = kappa_J
+        self.kappa_p = kappa_p
 
         self._J = J
         self._dJdp = dolfin.derivative(J, p)
@@ -145,8 +164,6 @@ class TopologyOptimizer:
             self.diffusion_filter.parameters,
             config.parameters_linear_solver)
 
-        self.parameters_nonlinear_solver = self.nonlinear_solver.parameters
-        self.parameters_diffusion_filter = self.diffusion_filter.parameters
         self.parameters_topology_solver = config.parameters_topology_solver.copy()
         self.record_iteration_state = iteration_state_recording_function
 
@@ -171,23 +188,20 @@ class TopologyOptimizer:
         atol_C = [rtol_C * np.abs(assemble(dCdp_i)[:]).sum()
                   for dCdp_i in self._dCdp]
 
-        # Whether to smooth the cost gradient `dJdp`
-        require_filtering = bool(self._kappa.values())
-
-        J_val_prv = np.inf
+        # Flag for cost gradient smoothing
+        require_filtering = bool(self.kappa_J)
 
         p_vec = self._p.vector()
         f_vec = self._f.vector()
 
-
-        # TEMP
-        ps_arr = self._phasefields_dof
-        dps_arr = [p_i.copy() for p_i in ps_arr]
-
-
         p_arr = p_vec.get_local()
         dp_arr = p_arr.copy()
+
+        J_val_prv = np.inf
         normL2_dp = np.inf
+
+        ps_vec = [p_i.vector() for p_i in self._ps]
+        ws_arr = np.empty((len(p_vec), len(ps_vec)))
 
         divergences_count = 0
         is_converged = False
@@ -201,23 +215,19 @@ class TopologyOptimizer:
 
         for k_itr in range(maximum_iterations):
 
-            # Compute adjoint solution `z`
-            # self.adjoint_solver.solve()
-
             J_val = assemble(self._J)
-            C_val = [assemble(C_i) for C_i in self._C]
-
             dJdp_arr = assemble(self._dJdp).get_local()
+
+            C_val = [assemble(C_i) for C_i in self._C]
             dCdp_arr = [assemble(dCdp_i).get_local() for dCdp_i in self._dCdp]
 
             if require_filtering:
 
                 f_vec[:] = dJdp_arr
+
+                self._kappa.assign(self.kappa_J)
                 self.diffusion_filter.apply()
                 dJdp_arr = f_vec.get_local()
-
-                # ind_nnz = np.flatnonzero(dJdp_arr)
-                # dJdp_arr[ind_nnz] = f_vec[ind_nnz]
 
             # User-defined recorder function
             self.record_iteration_state()
@@ -246,8 +256,6 @@ class TopologyOptimizer:
             # Compute nodal phasefield change `dp_arr`
             # such that norm(dp_arr, inf) -> stepsize
 
-            # Dissipation potentiak
-
             dJdp_max = np.abs(dJdp_arr).max() + EPS
             dp_arr = dJdp_arr * (-stepsize / dJdp_max)
 
@@ -262,17 +270,63 @@ class TopologyOptimizer:
             dp_arr = p_arr - p_arr_prv
 
 
-            ### Enforce equality constraint
+            ### Determine active phasefile regions
 
-            # Constraint correction vectors (initialize)
-            # msk_dp_aux = [dCdp_arr_i.astype(bool) for dCdp_arr_i in dCdp_arr]
-            # ind_dp_aux = [np.flatnonzero(msk_i) for msk_i in msk_dp_aux]
-            # dp_aux = [msk_i.astype(float) for msk_i in msk_dp_aux]
+            # * Diffuse each phasefield
+            # * The the diffusive solution marks over active regions of the
+            #   the phasefield
+            # * Only advance the phasefield that has maximum diffused value
+
+            self._kappa.assign(self.kappa_p)
+            for i, p_vec_i in enumerate(ps_vec):
+
+                f_vec[:] = p_vec_i
+
+                self.diffusion_filter.apply()
+                ws_arr[:,i] = f_vec.get_local()
+
+            # Initialize phasefield dofs as inactive
+            mask_active = np.zeros(ws_arr.shape, bool)
+
+            # Identify maximum-value phasefields
+            inds_max = np.argmax(ws_arr, axis=1)
+
+            # Mark maximum-value phasefields as active
+            for i in range(mask_active.shape[-1]):
+                mask_active[inds_max == i, i] = True
+
+
+            ### Find competing phasefields
+
+            phasefield_competition_threshold = 0.01
+
+            competing_phasefields_count = np.count_nonzero(
+                ws_arr > phasefield_competition_threshold, axis=1)
+
+            mask_competing_phasefields = competing_phasefields_count > 1
+
+
+            ### Enforce zero phasefield change for competing phasefields
+
+            mask_active[mask_competing_phasefields, :] = False
+            mask_active_any = mask_active.any(axis=1)
+
+            # All phasefield activities should be orthogonal
+            assert all(mask_active[:,i].dot(mask_active[:,j]) < 1e-12
+                       for i in range(mask_active.shape[-1]-1)
+                       for j in range(i+1, mask_active.shape[-1]))
+
+            dp_arr[~mask_active_any] = 0.0
+            p_arr = p_arr_prv + dp_arr
+
+
+            ### Enforce equality constraint(s)
+
+            # dp_aux = [(mask_active_any & dCdp_arr_i.astype(bool))
+            #           .astype(float) for dCdp_arr_i in dCdp_arr]
 
             dp_aux = [dCdp_arr_i.astype(bool).astype(float)
                       for dCdp_arr_i in dCdp_arr]
-
-            # Need to prescribe zero change in some regionsself.
 
             # Vectors must be exactly orthogonal
             assert all(dp_aux[i].dot(dp_aux_j) == 0.0
@@ -282,11 +336,18 @@ class TopologyOptimizer:
             for C_val_i, dCdp_arr_i, dp_aux_i, atol_C_i \
                 in zip(C_val, dCdp_arr, dp_aux, atol_C):
 
-                dCdp_aux_i = dCdp_arr_i.dot(dp_aux_i)
-                while abs(dCdp_aux_i) > atol_C_i:
+                R_i = C_val_i + dCdp_arr_i.dot(dp_arr)
 
-                    # Solve residual equation for correct magnitude of `dp_aux_i`
-                    dp_aux_i *= -(C_val_i + dCdp_arr_i.dot(dp_arr)) / dCdp_aux_i
+                while abs(R_i) > atol_C_i:
+
+                    dRdp_aux_i = dCdp_arr_i.dot(dp_aux_i)
+
+                    if abs(dRdp_aux_i) < atol_C_i:
+                        print('ERROR: Equality constraint can not be enforced.')
+                        break
+
+                    # Magnitude correction
+                    dp_aux_i *= -R_i/dRdp_aux_i
 
                     # Superpose correction
                     p_arr += dp_aux_i
@@ -310,20 +371,21 @@ class TopologyOptimizer:
                         dp_arr += dp_aux_i
                         break
 
-                    dCdp_aux_i = dCdp_arr_i.dot(dp_aux_i)
-
-                else:
-                    print('\nERROR: Unable to enforce equality constraint\n')
-                    error_message = 'equality_constraint'
-                    break
+                    R_i = C_val_i + dCdp_arr_i.dot(dp_arr)
 
             assert p_arr.min() > PHASEFIELD_LOWER_BOUND
             assert p_arr.max() < PHASEFIELD_UPPER_BOUND
 
 
-            ### Distribute phasefield
+            ### Assign updated phasefields
 
-            # TODO
+            for p_vec_i, mask_i in zip(ps_vec, mask_active.T):
+
+                mask_i = mask_active[:,i]
+                p_arr_i = np.zeros(p_arr.shape)
+                p_arr_i[mask_i] = p_arr[mask_i]
+
+                p_vec_i[:] = p_arr_i
 
 
             ### Phasefield change cosine similarity
@@ -377,22 +439,3 @@ class TopologyOptimizer:
                 print('\nERROR: Iterations did not converge\n')
 
         return k_itr, is_converged, error_message
-
-
-    @property
-    def kappa(self):
-        '''Diffusion filter parameter.'''
-        return float(self._kappa.values())
-
-    @kappa.setter
-    def kappa(self, value):
-        self._kappa.assign(float(value))
-
-    # @property
-    # def p_mean(self):
-    #     '''Diffusion filter parameter.'''
-    #     return float(self._p_mean.values())
-
-    # @p_mean.setter
-    # def p_mean(self, value):
-    #     self._p_mean.assign(float(value))

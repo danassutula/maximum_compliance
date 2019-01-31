@@ -5,9 +5,9 @@ optimization/config.py
 '''
 
 parameters_topology_solver = {
-    'maximum_iterations':100,
+    'maximum_iterations': 500,
     'maximum_divergences': 3,
-    'phasefield_tolerance': 1e-6,
+    'phasefield_tolerance': 1e-2,
     'constraint_tolerance': 1e-6,
     'error_on_nonconvergence': False,
     }
