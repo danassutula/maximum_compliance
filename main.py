@@ -133,11 +133,15 @@ def material_integrity(p, mi_min):
 ### Model Parameters
 
 # Energy gradient diffusion constant
-penalty_parameter      = gamma   = Constant(1e-5)
-filtering_diffusivity  = kappa_W = Constant(1e-5)
-filtering_diffusivity  = kappa_P = Constant(0e-5)
-filtering_diffusivity  = kappa_p = Constant(1e-4)
-material_integrity_min = mi_min  = Constant(0.01)
+
+kappa_W  = Constant(2e-5)
+kappa_P  = Constant(2e-5)
+kappa_p  = Constant(1e-3)
+kappa_p0 = Constant(1e-5)
+weight_P = 0.30
+
+# Minimal material integrity
+mi_min  = Constant(0.01)
 
 external_loading_values = np.linspace(0, 0.1, 2)[1:]
 target_phasefield_values = np.linspace(0.0, 0.05, 10)
@@ -372,7 +376,7 @@ ps = [p0, p1]
 
 # Apply diffusion filter to smooth out initial (sharp) phasefield
 for p_i in ps:
-    optimization.filter.apply_diffusion_filter(p_i, penalty_parameter)
+    optimization.filter.apply_diffusion_filter(p_i, kappa_p0)
 
     # a = p.vector().get_local()
     # assert np.all(a >= 0.0)
@@ -385,7 +389,7 @@ p.assign(sum(ps))
 
 optimizer = optimization.TopologyOptimizer(
     potential, penalty, constraint, p, ps, u, bcs_u,
-    kappa_W, kappa_P, kappa_p, recorder_function)
+    weight_P, kappa_W, kappa_P, kappa_p, recorder_function)
 
 
 for s in external_loading_values:
@@ -396,7 +400,7 @@ for s in external_loading_values:
 assert p.vector().min()+rtol > 0.0
 assert p.vector().max()-rtol < 1.0
 
-phasefield_stepsize = 0.1
+phasefield_stepsize = 0.100
 solver_iterations_count = 0
 
 

@@ -85,12 +85,14 @@ DEGREES_TO_RADIANS =  PI / 180.0
 
 # NOTE: Assigning a vector rather than array is significantly faster
 
+PHASEFIELD_COMPETITION_THRESHOLD = 0.001
+
 
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
     def __init__(self, W, P, C, p, ps, u, bcs_u,
-                 kappa_W=0.0, kappa_P=0.0, kappa_p=0.0,
+                 weight_P, kappa_W, kappa_P, kappa_p,
                  recorder_function = lambda: None):
         '''
 
@@ -128,6 +130,9 @@ class TopologyOptimizer:
         if np.any(p.vector() < PHASEFIELD_LOWER_BOUND): raise ValueError
         if np.any(p.vector() > PHASEFIELD_UPPER_BOUND): raise ValueError
 
+        if not -EPS < weight_P < 1.0+EPS:
+            raise ValueError('Parameter `weight_P`.')
+
         self._p = p
         self._u = u
 
@@ -140,6 +145,8 @@ class TopologyOptimizer:
         self.kappa_W = kappa_W
         self.kappa_P = kappa_P
         self.kappa_p = kappa_p
+
+        self.weight_P = weight_P
 
         self._W = W
         self._P = P
@@ -195,8 +202,8 @@ class TopologyOptimizer:
         atol_C = [rtol_C * np.abs(assemble(dCdp_i)[:]).sum()
                   for dCdp_i in self._dCdp]
 
-        # Flag for cost gradient smoothing
-        require_filtering = bool(self.kappa_W)
+        require_filtering_dWdp = bool(self.kappa_W)
+        require_filtering_dPdp = bool(self.kappa_P)
 
         p_vec = self._p.vector()
         f_vec = self._f.vector()
@@ -230,12 +237,14 @@ class TopologyOptimizer:
             C_val = [assemble(C_i) for C_i in self._C]
             dCdp_arr = [assemble(dCdp_i).get_local() for dCdp_i in self._dCdp]
 
-            if require_filtering:
+            if require_filtering_dWdp:
 
                 f_vec[:] = dWdp_arr
                 self._kappa.assign(self.kappa_W)
                 self.diffusion_filter.apply()
                 dWdp_arr = f_vec.get_local()
+
+            if require_filtering_dPdp:
 
                 f_vec[:] = dPdp_arr
                 self._kappa.assign(self.kappa_P)
@@ -266,17 +275,11 @@ class TopologyOptimizer:
 
             ### Estimate phasefield change
 
-            # Compute nodal phasefield change `dp_arr`
-            # such that norm(dp_arr, inf) -> stepsize
+            dWdp_arr /= (math.sqrt(dWdp_arr.dot(dWdp_arr)) + EPS)
+            dPdp_arr /= (math.sqrt(dPdp_arr.dot(dPdp_arr)) + EPS)
 
-            dWdp_max = np.abs(dWdp_arr).max() + EPS
-            dp_arr_W = dWdp_arr * (-stepsize / dWdp_max)
-
-            dPdp_max = np.abs(dPdp_arr).max() + EPS
-            dp_arr_P = dPdp_arr * (-stepsize / dPdp_max)
-
-            dp_arr = (dp_arr_W + dp_arr_P * 0.01)
-            dp_arr /= np.abs(dp_arr).max()
+            dp_arr = dWdp_arr * (1.0-self.weight_P) + dPdp_arr * self.weight_P
+            dp_arr *= (-stepsize) / np.abs(dp_arr).max()
             p_arr = p_arr + dp_arr
 
 
@@ -316,10 +319,8 @@ class TopologyOptimizer:
 
             ### Find competing phasefields
 
-            phasefield_competition_threshold = 0.0001
-
             competing_phasefields_count = np.count_nonzero(
-                ws_arr > phasefield_competition_threshold, axis=1)
+                ws_arr > PHASEFIELD_COMPETITION_THRESHOLD, axis=1)
 
             mask_competing_phasefields = competing_phasefields_count > 1
 
