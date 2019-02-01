@@ -157,7 +157,7 @@ p_mean = Constant(0.0)
 
 ### Mesh
 
-nx = ny = 100 # number of elements
+nx = ny = 150 # number of elements
 # mesh_pattern = "left"
 mesh_pattern = "left/right"
 
