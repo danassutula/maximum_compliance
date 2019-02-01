@@ -157,7 +157,7 @@ p_mean = Constant(0.0)
 
 ### Mesh
 
-nx = ny = 200 # number of elements
+nx = ny = 150 # number of elements
 # mesh_pattern = "left"
 mesh_pattern = "left/right"
 
@@ -378,9 +378,10 @@ ps = [p0, p1]
 for p_i in ps:
     optimization.filter.apply_diffusion_filter(p_i, kappa_p0)
 
-    # a = p.vector().get_local()
-    # assert np.all(a >= 0.0)
-    # assert np.all(a <= 1.0)
+    p_arr_i = p_i.vector().get_local()
+    p_arr_i[p_arr_i < 0.0] = 0.0
+    p_arr_i[p_arr_i > 1.0] = 1.0
+    p_i.vector()[:] = p_arr_i
 
 p.assign(sum(ps))
 
