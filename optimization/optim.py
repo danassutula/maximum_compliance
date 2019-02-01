@@ -64,6 +64,7 @@ import numpy as np
 
 from dolfin import assemble
 from dolfin import project
+from dolfin import solve
 
 # TEMP
 import matplotlib.pyplot as plt
@@ -92,7 +93,7 @@ class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
     def __init__(self, W, P, C, p, ps, u, bcs_u,
-                 weight_P, kappa_W, kappa_P, kappa_p,
+                 weight_P, kappa_W, kappa_P, kappa_I,
                  recorder_function = lambda: None):
         '''
 
@@ -112,6 +113,9 @@ class TopologyOptimizer:
 
         '''
 
+        if not -EPS < weight_P < 1.0+EPS:
+            raise ValueError('Parameter `weight_P`.')
+
         # Sequence of local phasefields
         if isinstance(ps, (list, tuple)) and all(
            isinstance(ps_i, dolfin.Function) for ps_i in ps):
@@ -130,21 +134,21 @@ class TopologyOptimizer:
         if np.any(p.vector() < PHASEFIELD_LOWER_BOUND): raise ValueError
         if np.any(p.vector() > PHASEFIELD_UPPER_BOUND): raise ValueError
 
-        if not -EPS < weight_P < 1.0+EPS:
-            raise ValueError('Parameter `weight_P`.')
-
         self._p = p
         self._u = u
 
-        # Function to be passed to a diffusion filter
-        self._f = dolfin.Function(p.function_space())
+        if not isinstance(kappa_W, dolfin.Constant):
+            kappa_W = dolfin.Constant(kappa_W)
 
-        # Diffusion-like constant for the filter
-        self._kappa = dolfin.Constant(0.0)
+        if not isinstance(kappa_P, dolfin.Constant):
+            kappa_P = dolfin.Constant(kappa_P)
 
-        self.kappa_W = kappa_W
-        self.kappa_P = kappa_P
-        self.kappa_p = kappa_p
+        if not isinstance(kappa_I, dolfin.Constant):
+            kappa_I = dolfin.Constant(kappa_I)
+
+        self._require_filtering_W = bool(float(kappa_W.values()))
+        self._require_filtering_P = bool(float(kappa_P.values()))
+        self._require_filtering_I = bool(float(kappa_I.values()))
 
         self.weight_P = weight_P
 
@@ -166,15 +170,20 @@ class TopologyOptimizer:
 
         nonlinear_problem = dolfin.NonlinearVariationalProblem(F, u, bcs_u, dFdu)
         self.nonlinear_solver = dolfin.NonlinearVariationalSolver(nonlinear_problem)
-        self.diffusion_filter = filter.make_diffusion_filter(self._f, self._kappa)
+
+        v = dolfin.TestFunction(p.function_space())
+        f = dolfin.TrialFunction(p.function_space())
+
+        self._filter_KW = assemble((f * v + kappa_W * dolfin.dot(dolfin.grad(f), dolfin.grad(v))) * dolfin.dx)
+        self._filter_KP = assemble((f * v + kappa_P * dolfin.dot(dolfin.grad(f), dolfin.grad(v))) * dolfin.dx)
+        self._filter_KI = assemble((f * v + kappa_I * dolfin.dot(dolfin.grad(f), dolfin.grad(v))) * dolfin.dx)
+
+        self._f = dolfin.Function(p.function_space())
+        self._filter_rhs = self._f * v * dolfin.dx
 
         utility.update_lhs_parameters_from_rhs(
             self.nonlinear_solver.parameters,
             config.parameters_nonlinear_solver)
-
-        utility.update_lhs_parameters_from_rhs(
-            self.diffusion_filter.parameters,
-            config.parameters_linear_solver)
 
         self.parameters_topology_solver = \
             config.parameters_topology_solver.copy()
@@ -201,9 +210,6 @@ class TopologyOptimizer:
         rtol_C = prm['constraint_tolerance']
         atol_C = [rtol_C * np.abs(assemble(dCdp_i)[:]).sum()
                   for dCdp_i in self._dCdp]
-
-        require_filtering_dWdp = bool(self.kappa_W)
-        require_filtering_dPdp = bool(self.kappa_P)
 
         p_vec = self._p.vector()
         f_vec = self._f.vector()
@@ -237,18 +243,18 @@ class TopologyOptimizer:
             C_val = [assemble(C_i) for C_i in self._C]
             dCdp_arr = [assemble(dCdp_i).get_local() for dCdp_i in self._dCdp]
 
-            if require_filtering_dWdp:
+            if self._require_filtering_W:
 
                 f_vec[:] = dWdp_arr
-                self._kappa.assign(self.kappa_W)
-                self.diffusion_filter.apply()
+                rhs = assemble(self._filter_rhs)
+                solve(self._filter_KW, f_vec, rhs)
                 dWdp_arr = f_vec.get_local()
 
-            if require_filtering_dPdp:
+            if self._require_filtering_P:
 
                 f_vec[:] = dPdp_arr
-                self._kappa.assign(self.kappa_P)
-                self.diffusion_filter.apply()
+                rhs = assemble(self._filter_rhs)
+                solve(self._filter_KP, f_vec, rhs)
                 dPdp_arr = f_vec.get_local()
 
             # User-defined recorder
@@ -298,12 +304,11 @@ class TopologyOptimizer:
             #   the phasefield
             # * Only advance the phasefield that has maximum diffused value
 
-            self._kappa.assign(self.kappa_p)
             for i, p_vec_i in enumerate(ps_vec):
 
                 f_vec[:] = p_vec_i
-
-                self.diffusion_filter.apply()
+                rhs = assemble(self._filter_rhs)
+                solve(self._filter_KI, f_vec, rhs)
                 ws_arr[:,i] = f_vec.get_local()
 
             # Initialize phasefield dofs as inactive
