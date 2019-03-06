@@ -1,4 +1,5 @@
 import os
+import dolfin
 import numpy as np
 
 # Extensions of files that are allowed to be deleted
@@ -36,11 +37,11 @@ def cleanup_filepath(filepath):
 
 def insert_defect(p, xc, r, rtol):
 
-    V_p = p.function_space()
-    hmax = V_p.mesh().hmax()
+    V = p.function_space()
+    hmax = V.mesh().hmax()
     atol = hmax * rtol
 
-    x = V_p.tabulate_dof_coordinates()
+    x = V.tabulate_dof_coordinates()
     s = (((x-xc)/r)**2).sum(axis=1)
 
     p_arr = p.vector().get_local()
@@ -49,7 +50,7 @@ def insert_defect(p, xc, r, rtol):
     p.vector().set_local(p_arr)
 
 
-def insert_defect_array(xlim, ylim, n, m, p, r, rtol):
+def insert_defect_array(xlim, ylim, n, m, V, r, rtol):
 
     x = np.linspace(xlim[0], xlim[1], n)
     y = np.linspace(ylim[0], ylim[1], m)
@@ -59,13 +60,21 @@ def insert_defect_array(xlim, ylim, n, m, p, r, rtol):
     x = x.reshape((-1,))
     y = y.reshape((-1,))
 
+    ps = []
+
     for xc in np.stack([x,y], axis=1):
+        p = dolfin.Function(V)
         insert_defect(p, xc, r, rtol)
+        ps.append(p)
+
+    return ps
 
 
-def insert_defect_array_with_checker_pattern(xlim, ylim, n, m, p, r, rtol):
+def insert_defect_array_with_checker_pattern(xlim, ylim, n, m, V, r, rtol):
 
-    insert_defect_array(xlim, ylim, n, m, p, r, rtol)
+    ps = []
+
+    ps.extend(insert_defect_array(xlim, ylim, n, m, V, r, rtol))
 
     dx = (xlim[1] - xlim[0]) / (n-1)
     dy = (ylim[1] - ylim[0]) / (m-1)
@@ -76,4 +85,6 @@ def insert_defect_array_with_checker_pattern(xlim, ylim, n, m, p, r, rtol):
     n -= 1
     m -= 1
 
-    insert_defect_array(xlim, ylim, n, m, p, r, rtol)
+    ps.extend(insert_defect_array(xlim, ylim, n, m, V, r, rtol))
+
+    return ps
