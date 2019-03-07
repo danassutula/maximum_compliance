@@ -108,15 +108,24 @@ class TopologyOptimizer:
         Parameters
         ----------
         W : dolfin.Form
-            Cost functional to be minimized.
-        W : dolfin.Form
             Potential energy to be minimized.
+        P : dolfin.Form
+            Penalty energy to be minimized.
         C : dolfin.Form or a sequence of dolfin.Form's
             Equality constraint(s) as integral equations.
-        D : dolfin.Form
-            Filter problem.
-        kappa : float or dolfin.Constant (optional)
-            Diffusion-like coefficient for smoothing the cost gradient.
+        p : dolfin.Function
+            Global phasefield function.
+        ps : sequence of dolfin.Function's
+            Local phasefield functions.
+        weight_P : float
+            Penalty energy weight factor relative to strain energy.
+        kappa_W : float or dolfin.Constant
+            Diffusion-like coefficient for smoothing the energy gradient.
+        kappa_P : float or dolfin.Constant
+            Diffusion-like coefficient for smoothing the penalty gradient.
+        kappa_I : float or dolfin.Constant
+            Diffusion-like coefficient for detecting the interaction among
+            phasefields by spreading out the phasefields and detecting overlap.
 
         Notes
         -----

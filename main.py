@@ -72,7 +72,6 @@ importlib.reload(optimization.optim) # TEMP
 importlib.reload(optimization) # TEMP
 importlib.reload(utility) # TEMP
 
-
 def plot(*args, **kwargs):
     '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
     plt.figure(kwargs.pop('name', None))
@@ -82,6 +81,9 @@ def plot(*args, **kwargs):
         dolfin.plot(*args, **kwargs)
     plt.show()
 
+# Optimization options for the form compiler
+parameters["form_compiler"]["cpp_optimize"] = True
+parameters["form_compiler"]["optimize"] = True
 
 output_directory = "results"
 output_filename_u = "tmp/u.pvd" # "u.xdmf"
@@ -168,7 +170,7 @@ p_mean = Constant(0.0)
 
 ### Mesh
 
-nx = ny = 150 # number of elements
+nx = ny = 100 # number of elements
 # mesh_pattern = "left"
 mesh_pattern = "left/right"
 
@@ -228,15 +230,7 @@ dx_sub = [dolfin.dx(subdomain_id=i, domain=mesh,
 #                      degree=None, scheme=None, rule=None)
 
 
-### Discretization
-
-element_u = {'scheme': 'CG', 'degree': 1}
-element_p = {'scheme': 'CG', 'degree': 1}
-
-V_u = VectorFunctionSpace(mesh, element_u['scheme'], element_u['degree'])
-V_p = FunctionSpace(mesh, element_p['scheme'], element_p['degree'])
-
-V_ux, V_uy = V_u.split()
+# Boundary subdomains
 
 def boundary_bot(x, on_boundary):
     return on_boundary and x[1] < atol
@@ -251,9 +245,20 @@ def boundary_rhs(x, on_boundary):
     return on_boundary and x[0] + atol > 1
 
 class CornerBottomLeft(SubDomain):
-  def inside(self, x, on_boundary):
-    return near(x[0], 0.0, DOLFIN_EPS) and \
-           near(x[1], 0.0, DOLFIN_EPS)
+    def inside(self, x, on_boundary):
+        return near(x[0], 0.0, DOLFIN_EPS) and near(x[1], 0.0, DOLFIN_EPS)
+
+class PeriodicBoundary(SubDomain):
+
+    # Left boundary is "target domain" G
+    def inside(self, x, on_boundary):
+        return x[0] < DOLFIN_EPS and x[0] > -DOLFIN_EPS and on_boundary
+
+    # Map right boundary (H) to left boundary (G)
+    def map(self, x, y):
+        y[0] = x[0] - 1.0
+        y[1] = x[1]
+
 
 uxD_lhs = Expression('-s', s=0.0, degree=0)
 uxD_rhs = Expression(' s', s=0.0, degree=0)
@@ -262,7 +267,17 @@ uyD_top = Expression(' s', s=0.0, degree=0)
 uxD_lbc = Expression('-s', s=0.0, degree=0)
 uyD_lbc = Expression('-s', s=0.0, degree=0)
 
-# Biaxial extension
+
+### Discretization
+
+V_u = VectorFunctionSpace(mesh, 'CG', 1, constrained_domain=PeriodicBoundary())
+V_p = FunctionSpace(mesh, 'CG', 1, constrained_domain=PeriodicBoundary())
+
+V_ux, V_uy = V_u.split()
+
+
+# Boundary conditions
+
 bcs_u = [
     DirichletBC(V_u.sub(0), uxD_lhs, boundary_lhs),
     DirichletBC(V_u.sub(0), uxD_rhs, boundary_rhs),
