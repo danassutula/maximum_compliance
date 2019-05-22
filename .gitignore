@@ -1,7 +1,20 @@
 .*
 *.pyc
+*.png
+*.jpg
+*.pdf
+*.pvd
+*.vtu
 
 __pycache__
-temp*
+
+**/temp*
+**/test*
+
+img*
+out*
+
+**/outputs
+**/results
 
 !.gitignore
