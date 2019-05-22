@@ -4,6 +4,10 @@ optimization/config.py
 
 '''
 
+import logging 
+
+logger = logging.getLogger()
+
 parameters_topology_solver = {
     'maximum_iterations': 500,
     'maximum_divergences': 3,

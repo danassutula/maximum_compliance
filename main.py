@@ -66,7 +66,7 @@ import utility
 import importlib # TEMP
 
 importlib.reload(optimization.config) # TEMP
-importlib.reload(optimization.filter) # TEMP
+importlib.reload(optimization.filters) # TEMP
 importlib.reload(optimization.utility) # TEMP
 importlib.reload(optimization.optim) # TEMP
 importlib.reload(optimization) # TEMP
@@ -403,7 +403,7 @@ ps = utility.insert_defect_array_with_checker_pattern(
 
 # Apply diffusion filter to smooth out initial (sharp) phasefield
 for p_i in ps:
-    optimization.filter.apply_diffusion_filter(p_i, kappa_p)
+    optimization.filters.apply_diffusion_filter(p_i, kappa_p)
 
     p_arr_i = p_i.vector().get_local()
     p_arr_i[p_arr_i < 0.0] = 0.0

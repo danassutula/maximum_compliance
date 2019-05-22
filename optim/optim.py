@@ -81,7 +81,7 @@ def plot(*args, **kwargs):
     plt.show()
 
 from . import config
-from . import filter
+from . import filters
 from . import utility
 
 EPS = 1e-14
