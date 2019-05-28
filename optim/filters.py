@@ -36,7 +36,7 @@ def weight(x, bump_alpha=10):
 def apply_diffusion_filter(fn, kappa):
     '''One-time application of the diffusion filter.'''
 
-    diffusion_filter = filters.make_diffusion_filter(fn, kappa)
+    diffusion_filter = make_diffusion_filter(fn, kappa)
 
     utility.update_lhs_parameters_from_rhs(
         diffusion_filter.parameters,

@@ -1,10 +1,10 @@
 '''
 
-optimization/config.py
+optim/config.py
 
 '''
 
-import logging 
+import logging
 
 logger = logging.getLogger()
 

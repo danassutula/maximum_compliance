@@ -14,8 +14,7 @@ matplotlib.interactive(True)
 import logging
 logging.basicConfig(
     level=logging.WARNING,
-    format='\nLOG: %(funcName)s - %(levelname)s\n'
-           '  %(message)s\n')
+    format='[%(levelname)s:%(funcName)s] %(message)s')
 
 import dolfin
 dolfin.set_log_level(logging.WARNING)

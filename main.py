@@ -56,21 +56,12 @@ import matplotlib.pyplot as plt
 
 from dolfin import *
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-import optimization
+import optim
 import material
 import utility
 
-import importlib # TEMP
-
-importlib.reload(optimization.config) # TEMP
-importlib.reload(optimization.filters) # TEMP
-importlib.reload(optimization.utility) # TEMP
-importlib.reload(optimization.optim) # TEMP
-importlib.reload(optimization) # TEMP
-importlib.reload(utility) # TEMP
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 def plot(*args, **kwargs):
     '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
@@ -80,10 +71,6 @@ def plot(*args, **kwargs):
     else: # just try it anyway
         dolfin.plot(*args, **kwargs)
     plt.show()
-
-# Optimization options for the form compiler
-parameters["form_compiler"]["cpp_optimize"] = True
-parameters["form_compiler"]["optimize"] = True
 
 output_directory = "results"
 output_filename_u = "tmp/u.pvd" # "u.xdmf"
@@ -140,10 +127,10 @@ def material_integrity(p, mi_min):
 # The diffusion constant should not be too big because the filter problems is
 # essentially a transient diffusion problem.
 
-kappa_W = Constant(1e-4)
-kappa_P = Constant(1e-4)
-kappa_I = Constant(1e-4)
-kappa_p = Constant(1e-4)
+kappa_W = Constant(2e-4 * 0)
+kappa_P = Constant(2e-4 * 0)
+kappa_I = Constant(2e-4)
+# kappa_p = Constant(1e-4)
 
 # NOTE
 # The weigth in favour of penalty should not be too big as otherwise,
@@ -151,7 +138,10 @@ kappa_p = Constant(1e-4)
 # The weight should not be too small since then the phasefield is ver sharp
 # (does not spread at all)
 
-weight_P = 0.2
+weight_P = 0.25
+# weight_P = 0.5
+
+assert 0 <= weight_P < 1.0
 
 # Minimal material integrity
 mi_min  = Constant(1e-4)
@@ -170,8 +160,7 @@ p_mean = Constant(0.0)
 
 ### Mesh
 
-nx = ny = 100 # number of elements
-# mesh_pattern = "left"
+nx = ny = 50 # number of elements
 mesh_pattern = "left/right"
 
 mesh = UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
@@ -189,41 +178,41 @@ atol = rtol * L_max
 #     "pow(x[0]-x0, 2) + pow(x[1]-y0, 2) < pow(r, 2)",
 #     x0=0.0, y0=0.0, r=0.0)
 
-phasefield_subdomain = dolfin.CompiledSubDomain(
-    "x0 <= x[0] && y0 <= x[1] && x1 >= x[0] && y1 >= x[1]",
-    x0=0.0, y0=0.0, x1=1.0, y1=1.0)
+# phasefield_subdomain = dolfin.CompiledSubDomain(
+#     "x0 <= x[0] && y0 <= x[1] && x1 >= x[0] && y1 >= x[1]",
+#     x0=0.0, y0=0.0, x1=1.0, y1=1.0)
 
 # phasefield_subdomain = dolfin.CompiledSubDomain(
 #     "std::max(std::abs(x[0]-x0),std::abs(x[1]-y0)) < r",
 #     x0=0.0, y0=0.0, r=0.0)
 
-phasefield_markers = dolfin.MeshFunction("size_t",
-    mesh, dim=mesh.geometric_dimension(), value=0)
+# phasefield_markers = dolfin.MeshFunction("size_t",
+#     mesh, dim=mesh.geometric_dimension(), value=0)
 
-phasefield_subdomain.set_property('x0', 0.0)
-phasefield_subdomain.set_property('y0', 0.0)
-phasefield_subdomain.set_property('x1', 0.5)
-phasefield_subdomain.set_property('y1', 0.5)
-phasefield_subdomain.mark(phasefield_markers, 1)
+# phasefield_subdomain.set_property('x0', 0.0)
+# phasefield_subdomain.set_property('y0', 0.0)
+# phasefield_subdomain.set_property('x1', 0.5)
+# phasefield_subdomain.set_property('y1', 0.5)
+# phasefield_subdomain.mark(phasefield_markers, 1)
 
-phasefield_subdomain.set_property('x0', 0.5)
-phasefield_subdomain.set_property('x1', 1.0)
-phasefield_subdomain.mark(phasefield_markers, 2)
+# phasefield_subdomain.set_property('x0', 0.5)
+# phasefield_subdomain.set_property('x1', 1.0)
+# phasefield_subdomain.mark(phasefield_markers, 2)
 
-phasefield_subdomain.set_property('y0', 0.5)
-phasefield_subdomain.set_property('y1', 1.0)
-phasefield_subdomain.mark(phasefield_markers, 3)
+# phasefield_subdomain.set_property('y0', 0.5)
+# phasefield_subdomain.set_property('y1', 1.0)
+# phasefield_subdomain.mark(phasefield_markers, 3)
 
-phasefield_subdomain.set_property('x0', 0.0)
-phasefield_subdomain.set_property('y0', 0.5)
-phasefield_subdomain.set_property('x1', 0.5)
-phasefield_subdomain.set_property('y1', 1.0)
-phasefield_subdomain.mark(phasefield_markers, 4)
+# phasefield_subdomain.set_property('x0', 0.0)
+# phasefield_subdomain.set_property('y0', 0.5)
+# phasefield_subdomain.set_property('x1', 0.5)
+# phasefield_subdomain.set_property('y1', 1.0)
+# phasefield_subdomain.mark(phasefield_markers, 4)
 
-dx_sub = [dolfin.dx(subdomain_id=i, domain=mesh,
-                    subdomain_data=phasefield_markers,
-                    degree=None, scheme=None, rule=None)
-          for i in (1,2,3,4)]
+# dx_sub = [dolfin.dx(subdomain_id=i, domain=mesh,
+#                     subdomain_data=phasefield_markers,
+#                     degree=None, scheme=None, rule=None)
+#           for i in (1,2,3,4)]
 
 # dx_sub_0 = dolfin.dx(subdomain_id=0, domain=mesh,
 #                      subdomain_data=phasefield_markers,
@@ -359,6 +348,7 @@ hist_potential  = []
 hist_phasefield = []
 
 def make_recorder_function():
+
     k_itr = 0
 
     recorder_checkpoints = []
@@ -390,6 +380,8 @@ recorder_function, recorder_checkpoints = make_recorder_function()
 
 ### Insert initial defects
 
+ps = utility.insert_defect_array_with_checker_pattern(
+    [ 0, 1], [ 0, 1], 3, 3, V_p, r=0.05, rtol=1e-9)
 
 # ps = utility.insert_defect_array(
 #     [ 0, 1], [   0,   1], 4, 4, p, r=0.025, rtol=1e-9)
@@ -398,25 +390,23 @@ recorder_function, recorder_checkpoints = make_recorder_function()
 
 # ps = utility.insert_defect_array(
 #     [ 0, 1], [   0,   1], 4, 4, p, r=0.025, rtol=1e-9)
-ps = utility.insert_defect_array_with_checker_pattern(
-    [ 0, 1], [ 0, 1], 4, 4, V_p, r=0.025, rtol=1e-9)
+# ps = utility.insert_defect_array_with_checker_pattern(
+#     [ 0, 1], [ 0, 1], 4, 4, V_p, r=0.025, rtol=1e-9)
 
 # Apply diffusion filter to smooth out initial (sharp) phasefield
 for p_i in ps:
-    optimization.filters.apply_diffusion_filter(p_i, kappa_p)
-
+    # optim.filters.apply_diffusion_filter(p_i, kappa_p)
     p_arr_i = p_i.vector().get_local()
     p_arr_i[p_arr_i < 0.0] = 0.0
     p_arr_i[p_arr_i > 1.0] = 1.0
     p_i.vector()[:] = p_arr_i
-
 
 p.assign(sum(ps))
 
 
 ### Define phasefield optimizer
 
-optimizer = optimization.TopologyOptimizer(
+optimizer = optim.TopologyOptimizer(
     potential, penalty, constraint, p, ps, u, bcs_u,
     weight_P, kappa_W, kappa_P, kappa_I, recorder_function)
 
@@ -429,7 +419,8 @@ for s in external_loading_values:
 assert p.vector().min()+rtol > 0.0
 assert p.vector().max()-rtol < 1.0
 
-phasefield_stepsize = 0.050
+phasefield_stepsize = 0.10
+# phasefield_stepsize = 0.05
 solver_iterations_count = 0
 
 target_phasefield_initial = assemble(p*dx) / assemble(1*dx(mesh))
@@ -479,6 +470,22 @@ if __name__ == "__main__":
 
 
     ### Plot solutions
+
+    # TEMP
+    import matplotlib.pyplot as plt
+
+    plt.interactive(True)
+
+    # TEMP
+    def plot(*args, **kwargs):
+        '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
+        plt.figure(kwargs.pop('name', None))
+        if isinstance(args[0], (np.ndarray,list, tuple)):
+            plt.plot(*args, **kwargs)
+        else: # just try it anyway
+            dolfin.plot(*args, **kwargs)
+        plt.show()
+
 
     def plot_energy_vs_iterations():
 
