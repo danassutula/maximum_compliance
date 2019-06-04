@@ -10,15 +10,14 @@ logger = logging.getLogger()
 
 parameters_topology_solver = {
     'maximum_iterations': 500,
-    'maximum_divergences': 3,
-    'influence_threshold': 0.05,
-    'phasefield_tolerance': 1e-2,
-    'constraint_tolerance': 1e-6,
+    'maximum_divergences': 5,
+    'collision_threshold': 1e-2,
+    'convergence_tolerance': 1e-4,
     'error_on_nonconvergence': False,
     }
 
 parameters_nonlinear_solver = {
-    'nonlinear_solver': 'snes',
+    'nonlinear_solver': 'newton',
     'symmetric': True,
     'print_matrix': False,
     'print_rhs': False,

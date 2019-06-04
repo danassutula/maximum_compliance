@@ -1,2 +1,11 @@
  Convert images to mp4:
  $ ffmpeg -framerate 24 -i img%03d.png output.mp4
+
+
+### How to modify the an assembled tensor.
+
+K.get(a, [0],[0,1,2])
+K.set(np.array([[10,20,30]]), [0],[0,1,2])
+K.get_diagonal(u.vector())
+K.set_diagonal(u.vector())
+K.apply('add')

@@ -6,6 +6,15 @@ University of Liberec, Czech Republic, 2018-2019
 NOTE: Assigning a vector rather than array is significantly faster
 
 TODO:
+    - What should be the right balance:
+        `dp_arr = dp_hat_W*weight_W + dp_hat_P*weight_P`. This balance depends
+        on the state of the solution. If the solution is overly diffusive
+        than, unless `weight_P` is very small, the solution continues on to
+        diffuse out. The reverse happens when the solution is very sharp; i.e.
+        in such a case, the solution becomes sharper unless `weight_W` is very
+        small. In summary, the solution tends either towards over-diffusion or
+        ultra-sharpness.
+
     - Try optimizing over a subdomain only. How about having a 2D array of
     subdomains.
 
@@ -81,7 +90,7 @@ PHASEFIELD_LOWER_BOUND = -EPS
 PHASEFIELD_UPPER_BOUND = 1.0 + EPS
 DEGREES_TO_RADIANS =  PI / 180.0
 
-SEQUENCE_TYPES = (list, tuple)
+SEQUENCE_TYPES = (tuple, list)
 
 logger = config.logger
 
@@ -89,9 +98,7 @@ logger = config.logger
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
-    def __init__(self, W, P, C, p, ps, u, bcs_u,
-                 weight_P, kappa_W, kappa_P, kappa_I,
-                 recorder_function = lambda: None):
+    def __init__(self, W, P, C, p, ps, u, bcs_u, kappa, userfunc=None):
         '''
 
         Parameters
@@ -106,15 +113,9 @@ class TopologyOptimizer:
             Global phasefield function.
         ps : sequence of Function's
             Local phasefield functions.
-        weight_P : float
-            Penalty energy weight factor relative to strain energy.
-        kappa_W : float or Constant
-            Diffusion-like coefficient for smoothing the energy gradient.
-        kappa_P : float or Constant
-            Diffusion-like coefficient for smoothing the penalty gradient.
-        kappa_I : float or Constant
-            Diffusion-like coefficient for detecting the interaction among
-            phasefields by spreading out the phasefields and detecting overlap.
+        kappa : float or dolfin.Constant
+            Phasefield proximity sensing parameter. Individual phasefields are
+            diffused and a measure of the overlap serves as a distance proxy.
 
         Notes
         -----
@@ -123,39 +124,21 @@ class TopologyOptimizer:
 
         '''
 
-        if not -EPS < weight_P < 1.0 + EPS:
-            raise ValueError('Parameter `weight_P`.')
-
-        # Sequence of local phasefields
-        if isinstance(ps, SEQUENCE_TYPES) and all(
-           isinstance(ps_i, Function) for ps_i in ps):
+        if not isinstance(ps, SEQUENCE_TYPES): ps = (ps,)
+        if all(isinstance(ps_i, Function) for ps_i in ps):
             self._ps = ps if isinstance(ps, tuple) else tuple(ps)
-
-        elif isinstance(ps, Function):
-            self._ps = (ps,)
-
         else:
-            raise TypeError('Parameter `ps` is neither a `Function` '
-                            'nor a sequence of `Function`s.')
+            raise TypeError('Parameter `ps` must be a `Function` '
+                            'or a sequence of `Function`s.')
 
-        # Global phasefield
-        p.assign(sum(ps))
+        if not isinstance(kappa, Constant):
+            kappa = Constant(float(kappa))
 
-        if np.any(p.vector() < PHASEFIELD_LOWER_BOUND): raise ValueError
-        if np.any(p.vector() > PHASEFIELD_UPPER_BOUND): raise ValueError
+        if userfunc is not None and not callable(userfunc):
+            raise TypeError('Parameter `userfunc` must be callable.')
 
         self._p = p
         self._u = u
-
-        if not isinstance(kappa_W, Constant): kappa_W = Constant(kappa_W)
-        if not isinstance(kappa_P, Constant): kappa_P = Constant(kappa_P)
-        if not isinstance(kappa_I, Constant): kappa_I = Constant(kappa_I)
-
-        # self._require_filtering_W = bool(float(kappa_W.values()))
-        # self._require_filtering_P = bool(float(kappa_P.values()))
-        self._require_filtering_I = bool(float(kappa_I.values()))
-
-        self.weight_P = weight_P
 
         self._W = W
         self._P = P
@@ -171,7 +154,8 @@ class TopologyOptimizer:
             self._dCdp = (derivative(C, p),)
 
         # Assuming constraints are linear (i.e. gradients are constant vectors)
-        self._dCdp_arr = [assemble(dCidp).get_local() for dCidp in self._dCdp]
+        self._dCdp_arr = tuple(assemble(dCidp).get_local() for dCidp in self._dCdp)
+        self._abstol_C = tuple(np.abs(dCidp).sum()*EPS for dCidp in self._dCdp_arr)
         self._dp_C_arr = self._constraint_correction_vectors(self._dCdp_arr)
 
         F = derivative(W, u)
@@ -183,31 +167,18 @@ class TopologyOptimizer:
         v = dolfin.TestFunction(p.function_space())
         f = dolfin.TrialFunction(p.function_space())
 
-        self._M = A = assemble(f*v*dx)
+        # Mass-like matrix for smoothing gradients
+        self._M = assemble(f*v*dx)
 
-        self._smoothing_solver_M = dolfin.LUSolver(A, "mumps")
-        self._smoothing_solver_M.parameters["symmetric"] = True
+        self._smoothing_solver = dolfin.LUSolver(self._M, "mumps")
+        self._smoothing_solver.parameters["symmetric"] = True
 
-        if bool(kappa_W):
-            A = assemble((f*v + kappa_W*dot(grad(f),grad(v)))*dx)
-            self._smoothing_solver_W = dolfin.LUSolver(A, "mumps")
-            self._smoothing_solver_W.parameters["symmetric"] = True
+        if bool(kappa.values()):
+            A = assemble((f*v + kappa*dot(grad(f),grad(v)))*dx)
+            self._diffusion_solver = dolfin.LUSolver(A, "mumps")
+            self._diffusion_solver.parameters["symmetric"] = True
         else:
-            self._smoothing_solver_W = self._smoothing_solver_M
-
-        if bool(kappa_P):
-            A = assemble((f*v + kappa_P*dot(grad(f),grad(v)))*dx)
-            self._smoothing_solver_P = dolfin.LUSolver(A, "mumps")
-            self._smoothing_solver_P.parameters["symmetric"] = True
-        else:
-            self._smoothing_solver_P = self._smoothing_solver_M
-
-        if bool(kappa_I):
-            A = assemble((f*v + kappa_I*dot(grad(f),grad(v)))*dx)
-            self._smoothing_solver_I = dolfin.LUSolver(A, "mumps")
-            self._smoothing_solver_I.parameters["symmetric"] = True
-        else:
-            self._smoothing_solver_I = self._smoothing_solver_M
+            self._diffusion_solver = self._smoothing_solver
 
         utility.update_lhs_parameters_from_rhs(
             self.nonlinear_solver.parameters,
@@ -216,23 +187,27 @@ class TopologyOptimizer:
         self.parameters_topology_solver = \
             config.parameters_topology_solver.copy()
 
-        self.recorder_function = recorder_function
+        self.userfunc = userfunc
 
 
-    def optimize(self, stepsize, phasefield_tolerance=None,
-        influence_threshold=None, maximum_iterations=None,
-        maximum_divergences=None):
+    def optimize(self, stepsize, regularization,
+        maximum_iterations=None, maximum_divergences=None,
+        collision_threshold=None, convergence_tolerance=None):
+        '''
+        Parameters
+        ----------
+        regularization : float
+            Penalty energy weight factor relative to strain energy.
+
+        '''
 
         if stepsize <= 0.0:
             raise ValueError('Require `stepsize` to be positive')
 
+        if not 0.0 <= regularization <= 1.0:
+            raise ValueError('Parameter `regularization` out of range.')
+
         prm = self.parameters_topology_solver
-
-        if phasefield_tolerance is None:
-            phasefield_tolerance = prm['phasefield_tolerance']
-
-        if influence_threshold is None:
-            influence_threshold = prm['influence_threshold']
 
         if maximum_iterations is None:
             maximum_iterations = prm['maximum_iterations']
@@ -240,161 +215,64 @@ class TopologyOptimizer:
         if maximum_divergences is None:
             maximum_divergences = prm['maximum_divergences']
 
-        weight_P = self.weight_P
+        if collision_threshold is None:
+            collision_threshold = prm['collision_threshold']
+
+        if convergence_tolerance is None:
+            convergence_tolerance = prm['convergence_tolerance']
+
+        weight_P = regularization
         weight_W = 1.0 - weight_P
-
-        dCdp_arr = self._dCdp_arr
-        dp_C_arr = self._dp_C_arr
-
-        rtol_C = prm['constraint_tolerance']
-        atol_C = [rtol_C * np.abs(dCidp_arr).sum()
-                  for dCidp_arr in dCdp_arr]
 
         p_vec = self._p.vector()
         p_arr = p_vec.get_local()
-        dp_arr = p_arr.copy()
+        dp_arr = 0.0 # Dummy value
 
-        W_val_prv = np.inf
-        normL2_dp = np.inf
-
-        ps_vec = [p_i.vector() for p_i in self._ps]
-        ws_arr = np.empty((len(ps_vec), len(p_vec))) # diffused phasefield values
-        ms_arr = np.empty(ws_arr.shape, dtype=bool)  # phasefield activity masks
+        ps_vec = tuple(p.vector() for p in self._ps) # DOFs of local phasefields
+        ws_arr = np.empty((len(ps_vec), len(p_arr))) # Diffused phasefield values
 
         divergences_count = 0
         is_converged = False
         error_message = ''
 
-        _, b = self.nonlinear_solver.solve()
+        W_val = np.inf
+        k_itr = 0
 
-        if not b:
-            raise RuntimeError('Unable to solve nonlinear problem')
+        while True:
 
-        # self._enforce_equality_constraints(dp_arr, p_arr,
-        #         p_arr_prv, dp_C_arr, dCdp_arr, C_val, atol_C)
-
-        for k_itr in range(maximum_iterations):
-
-            ### Assess convergence
-
-            # User-defined recorder
-            self.recorder_function()
-
-            W_val = assemble(self._W)
-            C_val = [assemble(C_i) for C_i in self._C]
-
-            if W_val_prv < W_val and all(abs(C_val_i) < atol_C_i
-                    for C_val_i, atol_C_i in zip(C_val, atol_C)):
-
-                logger.info('Iteration diverged.')
-                divergences_count += 1
-
-                if divergences_count > maximum_divergences:
-                    logger.info('Refining stepsize.')
-                    divergences_count = 0
-                    stepsize /= 2.0
-
-            W_val_prv  = W_val
-            p_arr_prv  = p_arr
-            dp_arr_prv = dp_arr
-
-            ### Estimate phasefield change
-
-            x = assemble(self._dWdp)
-            self._smoothing_solver_W.solve(x, x)
-            dp_hat_W = -x.get_local()
-
-            x = assemble(self._dPdp)
-            self._smoothing_solver_P.solve(x, x)
-            dp_hat_P = -x.get_local()
-
-            dp_hat_W /= math.sqrt(dp_hat_W.dot(dp_hat_W))
-            dp_hat_P /= math.sqrt(dp_hat_P.dot(dp_hat_P))
-
-            dp_arr = dp_hat_W*weight_W + dp_hat_P*weight_P
-            dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0
-            dp_arr[(p_arr == 1.0) & (dp_arr > 0.0)] = 0.0
-            dp_arr *= stepsize / np.abs(dp_arr).max()
-
-            ### Enforce phasefield bounds
-
+            p_arr_prv = p_arr
             p_arr = p_arr + dp_arr
 
-            p_arr[p_arr < 0.0] = 0.0
-            p_arr[p_arr > 1.0] = 1.0
-
-            dp_arr = p_arr - p_arr_prv
-
-            ### Diffusion of phasefields to find interactions
+            ### Diffuse phasefields to find interactions
 
             for i, p_vec_i in enumerate(ps_vec):
                 x = self._M * p_vec_i
-                self._smoothing_solver_I.solve(x, x)
+                self._diffusion_solver.solve(x, x)
                 ws_arr[i,:] = x.get_local()
 
-            ### Mark maximum-value phasefields as active
+            dominant_phasefield_ids = ws_arr.argmax(0)
+            competing_phasefield_dofs = np.flatnonzero(
+                (ws_arr > collision_threshold).sum(0) > 1)
 
-            # Find maximum value phasefields
-            argmax_ws = ws_arr.argmax(axis=0)
+            p_arr[competing_phasefield_dofs] = 0.0
 
-            for i in range(len(ps_vec)):
-                ms_arr[i,:] = argmax_ws == i
+            # Correct `p_arr` so that constraints are satisfied
+            self._enforce_phasefield_constraints(p_arr, p_arr_prv)
 
-            ### Force competing phasefields to be zero
+            # Actual phasefield change
+            dp_arr = p_arr - p_arr_prv
 
-            competing_phasefields = \
-                (ws_arr > influence_threshold).sum(axis=0) > 1
+            ### Update phasefields
 
-            ms_arr[:,competing_phasefields] = False
-            phasefield_inactivity = ~ms_arr.any(axis=0)
-
-            # All phasefield activities should be orthogonal
-            assert all(ms_arr[i,:].dot(ms_arr[j,:]) < EPS
-                       for i in range(len(ps_vec)-1)
-                       for j in range(i+1, len(ps_vec)))
-
-            p_arr_prv[phasefield_inactivity] = 0.0
-            dp_arr[phasefield_inactivity] = 0.0
-            p_arr = p_arr_prv + dp_arr
-
-            ### Enforce equality constraint(s)
-
-            self._enforce_equality_constraints(dp_arr, p_arr,
-                p_arr_prv, dp_C_arr, dCdp_arr, C_val, atol_C)
-
-            assert p_arr.min() > PHASEFIELD_LOWER_BOUND
-            assert p_arr.max() < PHASEFIELD_UPPER_BOUND
-
-            ### Assign updated phasefields
-
-            for p_vec_i, ms_arr_i in zip(ps_vec, ms_arr):
-
-                p_arr_i = np.zeros((len(p_arr),))
-                p_arr_i[ms_arr_i] = p_arr[ms_arr_i]
-                p_vec_i[:] = p_arr_i
-
-            ### Phasefield change cosine similarity
-
-            normL2_dp_prv = normL2_dp
-            normL2_dp = math.sqrt(dp_arr.dot(dp_arr))
-            cossim_dp = dp_arr.dot(dp_arr_prv) / (normL2_dp*normL2_dp_prv)
-
-            ### Convergence assessment
-
-            normL1_p = p_arr.sum()
-            normL1_dp = np.abs(dp_arr).sum()
-            phasefield_change = normL1_dp / normL1_p
-
-            logger.info(
-                  f'k:{k_itr:3d}, '
-                  f'W:{W_val: 11.5e}, '
-                  f'C:{np.abs(C_val).max(): 9.3e}, '
-                  f'|dp|/|p|:{phasefield_change: 8.2e}, '
-                  f'cossim_dp:{cossim_dp: 0.3f}, '
-                  f'stepsize:{stepsize: 0.4f} '
-                  )
-
+            # Update global phasefield
             p_vec[:] = p_arr
+
+            # Update local phasefields
+            for i, pi_vec in enumerate(ps_vec):
+                dofs_i = np.flatnonzero(dominant_phasefield_ids == i)
+                pi_vec[dofs_i] = p_arr[dofs_i]
+
+            ### Solve equilibrium problem
 
             _, b = self.nonlinear_solver.solve()
 
@@ -403,22 +281,71 @@ class TopologyOptimizer:
                 error_message = 'nonlinear_solver'
                 break
 
-            if phasefield_change < phasefield_tolerance:
+            ### Report
+
+            self.userfunc()
+
+            W_val_prv = W_val
+            W_val = assemble(self._W)
+
+            normL1_p = p_arr.sum()
+            normL1_dp = np.abs(dp_arr).sum()
+            phasefield_change = normL1_dp / normL1_p
+
+            logger.info(
+                  f'k:{k_itr:3d}, '
+                  f'W:{W_val: 11.5e}, '
+                  f'|dp|/|p|:{phasefield_change: 8.2e}, '
+                  f'stepsize:{stepsize: 0.4f} '
+                  )
+
+            ### Assess convergence
+
+            if phasefield_change < convergence_tolerance and k_itr > 0:
                 logger.info('Negligible phase-field change (break)')
-                is_converged = True # Do not update phasefield again
+                is_converged = True
                 break
 
-        else:
+            if k_itr == maximum_iterations:
+                logger.warning('Reached maximum number of iterations')
+                error_message = 'maximum_iterations'
+                break
 
-            logger.warning('Reached maximum number of iterations')
-            error_message = 'maximum_iterations'
-            is_converged = False
+            if W_val_prv < W_val:
+
+                logger.warning('Iteration diverged.')
+                divergences_count += 1
+
+                if divergences_count > maximum_divergences:
+                    logger.error('Exceeded maximum number of divergences.')
+                    error_message = 'maximum_diverged_iterations'
+                    break
+
+            k_itr += 1
+
+            ### Estimate phasefield change
+
+            x_W = assemble(self._dWdp)
+            x_P = assemble(self._dPdp)
+
+            x = x_W * (weight_W/math.sqrt(x_W.inner(x_W))) \
+              + x_P * (weight_P/math.sqrt(x_P.inner(x_P)))
+
+            self._smoothing_solver.solve(x, x)
+
+            dp_arr = -x.get_local()
+
+            dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0
+            dp_arr[(p_arr == 1.0) & (dp_arr > 0.0)] = 0.0
+
+            dp_arr *= stepsize / np.abs(dp_arr).max()
+
 
         if not is_converged:
             if prm['error_on_nonconvergence']:
                 raise RuntimeError(error_message)
             else:
-                logger.warning('Iterations did not converge')
+                logger.error('Iterations did not converge')
 
         return k_itr, is_converged, error_message
 
@@ -452,7 +379,7 @@ class TopologyOptimizer:
                 A_j[A_i] = False
 
         # Constraint correction vectors
-        dp_C = [A_i.astype(float) for A_i in A]
+        dp_C = tuple(A_i.astype(float) for A_i in A)
 
         assert all(abs(v_i.dot(v_j)) < EPS*min(v_j.dot(v_j), v_i.dot(v_i))
             for i, v_i in enumerate(dp_C[:-1]) for v_j in dp_C[i+1:]), \
@@ -461,68 +388,48 @@ class TopologyOptimizer:
         return dp_C
 
 
-    @staticmethod
-    def _enforce_equality_constraints(dp, p, p_prv, dp_C, dCdp, C, atol_C):
-        '''Correct `p` and `dp` so that the constraints `C` are satisfied.
+    def _enforce_phasefield_constraints(self, p_hat, p_cur):
+        '''Correct `p_hat` to satisfy phasefield constraints.
 
         Parameters
         ----------
-        p : numpy.ndarray (1D)
-            Nodal phasefield values.
-        dp : numpy.ndarray (1D)
-            Increment in the nodel phasefield values.
-        dp_C : sequence of numpy.ndarray (1D)
-            Initial (trial) phasefield corrections due to constraints.
-        dCdp : sequence of numpy.ndarray (1D)
-            Gradients of the equality constraint equations.
-        C : sequence of float's
-            Residual values of the constraint equations.
-        atol_C : sequence of float's
-            Convergence tolerances (absolute) for the constraint equations.
-
-        Returns
-        -------
-        None
+        p_hat : numpy.ndarray (1D)
+            Estimated phasefield values.
+        p_cur : numpy.ndarray (1D)
+            Current phasefield values.
 
         '''
 
-        # Require copy because it will be mutated
-        dp_C = (dp_C_i.copy() for dp_C_i in dp_C)
+        # p_cur = self._p.vector().get_local()
 
-        for dp_C_i, dCdp_i, C_i, atol_C_i in zip(dp_C, dCdp, C, atol_C):
+        for C_i, dCdp_i, dp_C_i, abstol_C_i in zip(
+                self._C, self._dCdp_arr, self._dp_C_arr, self._abstol_C):
 
-            R_i = C_i + dCdp_i.dot(dp)
-            while abs(R_i) > atol_C_i:
+            C_i = assemble(C_i)
+            dp_C_i = dp_C_i.copy()
+            R_i = C_i + dCdp_i.dot(p_hat-p_cur)
+
+            ind_lwr = np.array((), bool)
+            ind_upr = np.array((), bool)
+
+            while abs(R_i) > abstol_C_i:
+
+                dp_C_i[ind_lwr] = 0.0
+                dp_C_i[ind_upr] = 0.0
 
                 dRdp_C_i = dCdp_i.dot(dp_C_i)
-                if abs(dRdp_C_i) < atol_C_i:
-                    print('ERROR: Equality constraint can not be enforced.')
-                    break
 
-                # Magnitude correction
+                if abs(dRdp_C_i) < abstol_C_i:
+                    raise RuntimeError('Can not enforce equality constraints.')
+
                 dp_C_i *= -R_i/dRdp_C_i
 
-                # Superpose correction
-                p += dp_C_i
+                p_hat += dp_C_i
 
-                mask_lwr = p < 0.0
-                mask_upr = p > 1.0
+                ind_lwr = p_hat < 0.0
+                ind_upr = p_hat > 1.0
 
-                # Enforce phasefield constraints
-                if np.any(mask_upr) or np.any(mask_lwr):
+                p_hat[ind_lwr] = 0.0
+                p_hat[ind_upr] = 1.0
 
-                    p[mask_lwr] = 0.0
-                    p[mask_upr] = 1.0
-
-                    dp_C_i[mask_lwr] = 0.0
-                    dp_C_i[mask_upr] = 0.0
-
-                    dp[:] = p
-                    dp -= p_prv
-
-                else:
-
-                    dp += dp_C_i
-                    break
-
-                R_i = C_i + dCdp_i.dot(dp)
+                R_i = C_i + dCdp_i.dot(p_hat-p_cur)

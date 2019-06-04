@@ -1,47 +1,11 @@
-'''
-K.get(a, [0],[0,1,2])
-K.set(np.array([[10,20,30]]), [0],[0,1,2])
-K.get_diagonal(u.vector())
-K.set_diagonal(u.vector())
-K.apply('add')
+# -*- coding: utf-8 -*-
+"""
+Created on 01/10/2018
 
-NOTE: Defect energy will increase only if there is some initial defect.
+@author: Danas Sutula
 
-Todo:
+"""
 
-* How to enforce a more meaningful constrain? How to better relate the penalty
-    parameter dependent on the free energy?
-
-* Solve for the initial phasefield soluton.
-
-* Need to decompose strain energy into compression and tensionself.
-* Phase field filtering
-* Remove zero energy modes
-
-
-FIXME:
-* The regularization is mesh dependent.
-
-AIMING FOR:
-Thin defects:
-    penalize phasefield to get smaller defects,
-    penalize gradient to avoid islands (?)
-
-TODO:
-! Require mesh-independence. Do enough smoothing
-
-In fracture mechnicas using pf, the length scale can be controled easily thanks
-to external load control and energy exchange/balance. In topo. optimization
-it is more difficul because in the miinimization there is the competition
-between the strain energy dissipation and the phasefield gradient
-
-# NOTE: It is adventageous that the equality constraint is linear!
-
-The phasefield can break arbitrarily.
-
-'''
-
-# Import first
 import config
 
 import os
@@ -57,22 +21,18 @@ import matplotlib.pyplot as plt
 from dolfin import *
 
 import optim
+import filters
 import material
 import utility
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-def plot(*args, **kwargs):
-    '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
-    plt.figure(kwargs.pop('name', None))
-    if isinstance(args[0], (np.ndarray,list, tuple)):
-        plt.plot(*args, **kwargs)
-    else: # just try it anyway
-        dolfin.plot(*args, **kwargs)
-    plt.show()
+
+### Results output
 
 output_directory = "results"
+
 output_filename_u = "tmp/u.pvd" # "u.xdmf"
 output_filename_p = "tmp/p.pvd" # "p.xdmf"
 
@@ -89,137 +49,65 @@ outfile_p = dolfin.File(output_filepath_p)
 # outfile_p = dolfin.XDMFFile(output_filepath_p)
 
 
-def phasefield_regularization(p):
-    '''Large gradient penalty term.'''
-    return 0.5*dot(grad(p),grad(p))
-
-
-def material_integrity(p, mi_min):
-    '''Material integrity from the phase-field.
-
-    Important
-    ---------
-    The derivative of the material integrity with respect to the phasefield
-    function must be negative. This guarantees that an increase in the
-    phasefield results in a decrease in the material integrity.
-
-    '''
-    if not (isinstance(p, dolfin.Expression) or
-            isinstance(p, dolfin.Function) or
-            isinstance(p, np.ndarray)):
-        raise TypeError
-
-    EPS = 1e-12 # NOTE: Important for stability of sign
-    POW = 2
-
-    # if POW <= 1:
-    #     # No energy dissipation if fully damaged
-    #     raise ValueError('Require POW >= 1')
-
-    return mi_min + (1.0-mi_min) * ((1.0+EPS)-p) ** POW
-
-
-### Model Parameters
-
-# Energy gradient diffusion constant
-
-# NOTE
-# The diffusion constant should not be too big because the filter problems is
-# essentially a transient diffusion problem.
-
-kappa_W = Constant(2e-4 * 0)
-kappa_P = Constant(2e-4 * 0)
-kappa_I = Constant(2e-4)
-# kappa_p = Constant(1e-4)
-
-# NOTE
-# The weigth in favour of penalty should not be too big as otherwise,
-# the phasefield tends to dissipate out rather than concentrate
-# The weight should not be too small since then the phasefield is ver sharp
-# (does not spread at all)
-
-weight_P = 0.25
-# weight_P = 0.5
-
-assert 0 <= weight_P < 1.0
-
-# Minimal material integrity
-mi_min  = Constant(1e-4)
-
-external_loading_values = np.linspace(0, 0.01, 2)[1:]
-target_phasefield_values = np.linspace(0.0, 0.200, 6)
+### Model parameters
 
 material_parameters = {
     'E': Constant(1.0),
     'nu': Constant(0.3)
     }
 
-# Initialize target phasefield
-p_mean = Constant(0.0)
+external_loading_values = np.linspace(0, 0.01, 2)[1:]
+target_phasefield_values = np.linspace(0.0, 0.150, 10)
+
+# Minimum material integrity
+m_inf  = Constant(1e-5)
+
+
+### Discretization parameters
+
+nx = ny = 100 # number of elements
+
+mesh_pattern = "left/right"
+# mesh_pattern = "crossed"
+# mesh_pattern = "left"
+
+phasefield_stepsize = 0.1
+# phasefield_stepsize = 0.05
+# phasefield_stepsize = 0.025
+
+regularization = 0.30 # Phasefield advance direction is determined by weighting
+                      # the strain energy gradient and the penalty-like energy
+                      # gradient. Parameter `regularization` weights the penalty
+                      # whereas `(1-regularization)` weights the strain energy.
+
+phasefield_kappa = 1e-3 # Diffusion-like parameter. Individual phasefields are
+                        # diffused in order to detect forthcoming collisions.
+                        # The diffused phasefield overlap serves as a measure
+                        # of the closeness of phasefields.
+
+optim.config.parameters_topology_solver['maximum_iterations']    = 500
+optim.config.parameters_topology_solver['maximum_divergences']   = 3
+optim.config.parameters_topology_solver['collision_threshold']   = 5e-2
+optim.config.parameters_topology_solver['convergence_tolerance'] = 1e-4
+
+# NOTE: `collision_threshold` affects the phasefield collision detection.
+# Smaller value makes collision detection more sensitive. The parameter is
+# closelly related to parameter 'phasefield_kappa'.
 
 
 ### Mesh
 
-nx = ny = 50 # number of elements
-mesh_pattern = "left/right"
-
 mesh = UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
+
+
+
+# Boundary subdomains
 
 coord = mesh.coordinates()
 L_max = coord.max()-coord.min()
 
 rtol = 1e-12
 atol = rtol * L_max
-
-
-### Localize phasefield
-
-# phasefield_subdomain = dolfin.CompiledSubDomain(
-#     "pow(x[0]-x0, 2) + pow(x[1]-y0, 2) < pow(r, 2)",
-#     x0=0.0, y0=0.0, r=0.0)
-
-# phasefield_subdomain = dolfin.CompiledSubDomain(
-#     "x0 <= x[0] && y0 <= x[1] && x1 >= x[0] && y1 >= x[1]",
-#     x0=0.0, y0=0.0, x1=1.0, y1=1.0)
-
-# phasefield_subdomain = dolfin.CompiledSubDomain(
-#     "std::max(std::abs(x[0]-x0),std::abs(x[1]-y0)) < r",
-#     x0=0.0, y0=0.0, r=0.0)
-
-# phasefield_markers = dolfin.MeshFunction("size_t",
-#     mesh, dim=mesh.geometric_dimension(), value=0)
-
-# phasefield_subdomain.set_property('x0', 0.0)
-# phasefield_subdomain.set_property('y0', 0.0)
-# phasefield_subdomain.set_property('x1', 0.5)
-# phasefield_subdomain.set_property('y1', 0.5)
-# phasefield_subdomain.mark(phasefield_markers, 1)
-
-# phasefield_subdomain.set_property('x0', 0.5)
-# phasefield_subdomain.set_property('x1', 1.0)
-# phasefield_subdomain.mark(phasefield_markers, 2)
-
-# phasefield_subdomain.set_property('y0', 0.5)
-# phasefield_subdomain.set_property('y1', 1.0)
-# phasefield_subdomain.mark(phasefield_markers, 3)
-
-# phasefield_subdomain.set_property('x0', 0.0)
-# phasefield_subdomain.set_property('y0', 0.5)
-# phasefield_subdomain.set_property('x1', 0.5)
-# phasefield_subdomain.set_property('y1', 1.0)
-# phasefield_subdomain.mark(phasefield_markers, 4)
-
-# dx_sub = [dolfin.dx(subdomain_id=i, domain=mesh,
-#                     subdomain_data=phasefield_markers,
-#                     degree=None, scheme=None, rule=None)
-#           for i in (1,2,3,4)]
-
-# dx_sub_0 = dolfin.dx(subdomain_id=0, domain=mesh,
-#                      subdomain_data=phasefield_markers,
-#                      degree=None, scheme=None, rule=None)
-
-
-# Boundary subdomains
 
 def boundary_bot(x, on_boundary):
     return on_boundary and x[1] < atol
@@ -249,23 +137,28 @@ class PeriodicBoundary(SubDomain):
         y[1] = x[1]
 
 
+### Discretization
+
+V_u = VectorFunctionSpace(mesh, 'CG', 1) # , constrained_domain=PeriodicBoundary()
+V_p = FunctionSpace(mesh, 'CG', 1) # , constrained_domain=PeriodicBoundary()
+
+V_ux, V_uy = V_u.split()
+
+u = Function(V_u, name="displacement")
+p = Function(V_p, name="phasefield")
+
+# Initialize target mean phasefield
+p_mean = Constant(0.0)
+
+
+# Boundary conditions
+
 uxD_lhs = Expression('-s', s=0.0, degree=0)
 uxD_rhs = Expression(' s', s=0.0, degree=0)
 uyD_bot = Expression('-s', s=0.0, degree=0)
 uyD_top = Expression(' s', s=0.0, degree=0)
 uxD_lbc = Expression('-s', s=0.0, degree=0)
 uyD_lbc = Expression('-s', s=0.0, degree=0)
-
-
-### Discretization
-
-V_u = VectorFunctionSpace(mesh, 'CG', 1, constrained_domain=PeriodicBoundary())
-V_p = FunctionSpace(mesh, 'CG', 1, constrained_domain=PeriodicBoundary())
-
-V_ux, V_uy = V_u.split()
-
-
-# Boundary conditions
 
 bcs_u = [
     DirichletBC(V_u.sub(0), uxD_lhs, boundary_lhs),
@@ -309,10 +202,16 @@ def scale_boundary_displacements(s):
     uyD_lbc.s = s
 
 
-### Setup solver
+### Hyperelastic model
 
-u = Function(V_u, name="displacement")
-p = Function(V_p, name="phasefield") # phase-field
+def phasefield_regularization(p):
+    '''Penalty for large phasefield gradients.'''
+    return 0.5*dot(grad(p), grad(p))
+
+def material_integrity(p, m_inf, q=2):
+    '''Material integrity from the phase-field.'''
+    EPS = 1e-12 # NOTE: Important for stability of sign
+    return m_inf + (1.0-m_inf) * ((1.0+EPS)-p) ** q
 
 material_model = material.NeoHookeanModel(material_parameters, u)
 
@@ -320,68 +219,61 @@ psi = material_model.strain_energy_density()
 pk1 = material_model.stress_measure_pk1()
 pk2 = material_model.stress_measure_pk2()
 
-mi = material_integrity(p, mi_min)
+m = material_integrity(p, m_inf)
 phi = phasefield_regularization(p)
 
-N = FacetNormal(mesh)
-T = mi * dolfin.dot(pk1, N)
-
+# N = FacetNormal(mesh)
+# T = m * dolfin.dot(pk1, N)
 
 # Potential energy
-potential = mi * psi * dx
+potential = m * psi * dx
 
 # Phasefield regularization
 penalty = phi * dx
 
-# Total energy to be minimized
-# cost = potential
-
 # Material fraction constraint(s)
 constraint = (p - p_mean) * dx
 
-# constraint = [(p - p_mean) * dx_sub_i for dx_sub_i in dx_sub]
 
+### Results recording function
 
-hist_cost       = []
 hist_penalty    = []
 hist_potential  = []
 hist_phasefield = []
 
-def make_recorder_function():
+def _record_results_1():
+    hist_penalty.append(assemble(penalty))
+    hist_potential.append(assemble(potential))
+    hist_phasefield.append(float(p_mean.values()))
 
-    k_itr = 0
+def _record_results_2():
+    # outfile_u << u
+    outfile_p << p
+    # outfile_u.write(u, index)
+    # outfile_p.write(p, index)
 
-    recorder_checkpoints = []
+recording_period_results_1 = 1
+recording_period_results_2 = 5
 
-    def recorder_function(insist=False):
-        nonlocal k_itr
+record_index = 0
 
-        # hist_cost.append(assemble(cost))
-        hist_penalty.append(assemble(penalty))
-        hist_potential.append(assemble(potential))
-        hist_phasefield.append(float(p_mean.values()))
+def state_recording_function(insist=False):
 
-        if k_itr % 5 == 0 or insist:
+    global record_index
 
-            # outfile_u << u
-            outfile_p << p
+    if not record_index % recording_period_results_1 or insist:
+        _record_results_1()
+    if not record_index % recording_period_results_2 or insist:
+        _record_results_2()
 
-            # outfile_u.write(u, k_itr)
-            # outfile_p.write(p, k_itr)
-
-            recorder_checkpoints.append(k_itr)
-
-        k_itr += 1
-
-    return recorder_function, recorder_checkpoints
-
-recorder_function, recorder_checkpoints = make_recorder_function()
+    record_index += 1
 
 
-### Insert initial defects
+### Initial phasefields
 
-ps = utility.insert_defect_array_with_checker_pattern(
-    [ 0, 1], [ 0, 1], 3, 3, V_p, r=0.05, rtol=1e-9)
+ps = [Function(V_p) for _ in range(2)]
+utility.insert_defect(ps[0], [0.3, 0.5], r=0.05)
+utility.insert_defect(ps[1], [0.7, 0.5], r=0.05)
 
 # ps = utility.insert_defect_array(
 #     [ 0, 1], [   0,   1], 4, 4, p, r=0.025, rtol=1e-9)
@@ -390,68 +282,70 @@ ps = utility.insert_defect_array_with_checker_pattern(
 
 # ps = utility.insert_defect_array(
 #     [ 0, 1], [   0,   1], 4, 4, p, r=0.025, rtol=1e-9)
+
 # ps = utility.insert_defect_array_with_checker_pattern(
 #     [ 0, 1], [ 0, 1], 4, 4, V_p, r=0.025, rtol=1e-9)
 
-# Apply diffusion filter to smooth out initial (sharp) phasefield
+# Smooth initial (sharp) phasefields
 for p_i in ps:
-    # optim.filters.apply_diffusion_filter(p_i, kappa_p)
+    filters.apply_diffusion_filter(p_i, phasefield_kappa)
     p_arr_i = p_i.vector().get_local()
     p_arr_i[p_arr_i < 0.0] = 0.0
     p_arr_i[p_arr_i > 1.0] = 1.0
     p_i.vector()[:] = p_arr_i
 
+# Superpose local phasefields
 p.assign(sum(ps))
 
 
-### Define phasefield optimizer
-
-optimizer = optim.TopologyOptimizer(
-    potential, penalty, constraint, p, ps, u, bcs_u,
-    weight_P, kappa_W, kappa_P, kappa_I, recorder_function)
-
-
-for s in external_loading_values:
-    print(f'Solving for load increment {s:4.3f} ...')
-    scale_boundary_displacements(s)
-    optimizer.nonlinear_solver.solve()
-
-assert p.vector().min()+rtol > 0.0
-assert p.vector().max()-rtol < 1.0
-
-phasefield_stepsize = 0.10
-# phasefield_stepsize = 0.05
-solver_iterations_count = 0
+### Define phasefield optimization problem
 
 target_phasefield_initial = assemble(p*dx) / assemble(1*dx(mesh))
 target_phasefield_values += target_phasefield_initial
-target_phasefield_final = target_phasefield_values[-1] * 0.80
+target_phasefield_final = target_phasefield_values[-1] * 0.75
 
+optimizer = optim.TopologyOptimizer(
+    potential, penalty, constraint, p, ps, u, bcs_u,
+    phasefield_kappa, state_recording_function)
+
+for s_i in external_loading_values:
+    scale_boundary_displacements(s_i)
+    optimizer.nonlinear_solver.solve()
+
+
+### Solve phasefield optimization problem
+
+solver_iterations_count = 0
 
 t0 = time.time()
+
 for p_mean_i in target_phasefield_values:
+
     print(f'\n *** Solving for p_mean: {p_mean_i:4.3} *** \n')
 
     p_mean.assign(p_mean_i)
 
-    n_itr, is_converged, error_reason = \
-        optimizer.optimize(phasefield_stepsize)
+    n_itr, is_converged, error_reason = optimizer \
+        .optimize(phasefield_stepsize, regularization)
 
     solver_iterations_count += n_itr
 
-    if not is_converged:
-        phasefield_stepsize /= 2
-
 else:
 
-    # p_mean.assign(target_phasefield_final)
-    # optimizer.optimize(phasefield_stepsize)
+    p_mean_i = target_phasefield_final
+    phasefield_stepsize /= 4
 
-    recorder_function(insist=True)
-    print('CPU TIME:', time.time()-t0)
+    print(f'\n *** Solving for p_mean: {p_mean_i:4.3} (final) *** \n')
 
-assert p.vector().min()+rtol > 0.0
-assert p.vector().max()-rtol < 1.0
+    p_mean.assign(p_mean_i)
+
+    n_itr, is_converged, error_reason = optimizer \
+        .optimize(phasefield_stepsize, regularization)
+
+    solver_iterations_count += n_itr
+
+state_recording_function(insist=True)
+print('CPU TIME:', time.time()-t0)
 
 # Close output files (if can be closed)
 if hasattr(outfile_u, 'close'): outfile_u.close()
@@ -460,23 +354,10 @@ if hasattr(outfile_p, 'close'): outfile_p.close()
 
 if __name__ == "__main__":
 
-    ### Write out solutions
-
-    # results_dir = os.path.join(os.curdir, 'Results')
-    # results_file_u = os.path.join(results_dir, 'displacement.pvd')
-    # results_file_p = os.path.join(results_dir, 'phasefield.pvd')
-    # outfile_u = File(results_file_u)
-    # outfile_p = File(results_file_p)
-
+    plt.interactive(True)
 
     ### Plot solutions
 
-    # TEMP
-    import matplotlib.pyplot as plt
-
-    plt.interactive(True)
-
-    # TEMP
     def plot(*args, **kwargs):
         '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
         plt.figure(kwargs.pop('name', None))
@@ -486,18 +367,13 @@ if __name__ == "__main__":
             dolfin.plot(*args, **kwargs)
         plt.show()
 
-
     def plot_energy_vs_iterations():
 
         fh = plt.figure('energy_vs_iterations')
         fh.clear()
 
-        # plt.plot(hist_cost, '-r')
-        plt.plot(hist_potential, '-.g')
-
-
-        plt.legend(['total', 'strain', 'penalty'])
-
+        plt.plot(hist_potential, '-.k')
+        plt.legend(['potential energy'])
         plt.ylabel('Energy')
         plt.xlabel('Iteration number')
         plt.title('Energy vs. Iterations')
@@ -510,7 +386,7 @@ if __name__ == "__main__":
         EPS = 1e-12
 
         fh = plt.figure('energy_vs_phasefield')
-        # fh.clear()
+        fh.clear()
 
         n = len(hist_phasefield)
         d = np.diff(hist_phasefield)
@@ -524,7 +400,6 @@ if __name__ == "__main__":
         ind_last = ind.tolist()
         ind_last.append(n-1)
 
-        # y_cost = np.array(hist_cost)[ind_last]
         y_penalty = np.array(hist_penalty)[ind_last]
         y_potential = np.array(hist_potential)[ind_last]
         x_phasefield = np.array(hist_phasefield)[ind_last]
@@ -533,7 +408,7 @@ if __name__ == "__main__":
         plt.plot(x_phasefield, y_potential, '-.g')
         plt.plot(x_phasefield, y_penalty, '--b')
 
-        plt.legend(['total', 'strain', 'penalty'])
+        plt.legend(['potential', 'penalty'])
 
         plt.ylabel('Energy')
         plt.xlabel('Phasefield fraction')
@@ -555,20 +430,8 @@ if __name__ == "__main__":
         fh.tight_layout()
         plt.show()
 
-    # def plot_constraint():
-    #
-    #     fh = plt.figure('constraint')
-    #     fh.clear()
-    #
-    #     plt.plot(x, hist_constraint_equation, '-k')
-    #
-    #     plt.ylabel('C')
-    #     plt.xlabel('Iteration number, #')
-    #     plt.title('Evolution of Constraint Residual')
-    #
-    #     fh.tight_layout()  # otherwise the right y-label is slightly clipped
-    #     plt.show()
-
     plot_energy_vs_iterations()
     plot_energy_vs_phasefield()
     plot_phasefiled()
+
+    plt.show()

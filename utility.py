@@ -35,19 +35,36 @@ def cleanup_filepath(filepath):
                 os.remove(item)
 
 
-def insert_defect(p, xc, r, rtol):
+# def make_function_caller(func, period=1):
+
+#     seq = []
+#     idx = 0
+
+#     def function_caller(insist=False):
+
+#         nonlocal idx
+
+#         if idx % period == 0 or insist:
+
+#             func(idx)
+
+#             seq.append(idx)
+
+#         idx += 1
+
+#     return function_caller, seq
+
+
+def insert_defect(p, xc, r):
 
     V = p.function_space()
-    hmax = V.mesh().hmax()
-    atol = hmax * rtol
+    p_arr = p.vector().get_local()
 
     x = V.tabulate_dof_coordinates()
-    s = (((x-xc)/r)**2).sum(axis=1)
+    s = ((x-xc)**2).sum(axis=1)
 
-    p_arr = p.vector().get_local()
-    p_arr[s < 1.0 + atol] = 1.0
-
-    p.vector().set_local(p_arr)
+    p_arr[s < r**2] = 1.0
+    p.vector()[:] = p_arr
 
 
 def insert_defect_array(xlim, ylim, n, m, V, r, rtol):
@@ -64,7 +81,7 @@ def insert_defect_array(xlim, ylim, n, m, V, r, rtol):
 
     for xc in np.stack([x,y], axis=1):
         p = dolfin.Function(V)
-        insert_defect(p, xc, r, rtol)
+        insert_defect(p, xc, r)
         ps.append(p)
 
     return ps

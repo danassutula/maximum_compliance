@@ -3,8 +3,8 @@ import math
 import dolfin
 import numpy as np
 
-from . import config
-from . import utility
+# from . import config
+# from . import utility
 
 NP_EXP = np.exp
 MATH_E = math.e
@@ -38,9 +38,9 @@ def apply_diffusion_filter(fn, kappa):
 
     diffusion_filter = make_diffusion_filter(fn, kappa)
 
-    utility.update_lhs_parameters_from_rhs(
-        diffusion_filter.parameters,
-        config.parameters_linear_solver)
+    # utility.update_lhs_parameters_from_rhs(
+    #     diffusion_filter.parameters,
+    #     config.parameters_linear_solver)
 
     # Apply filter on `fn`
     diffusion_filter.apply()
