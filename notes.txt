@@ -1,3 +1,69 @@
+
+NOTE: Assigning a vector rather than array is significantly faster
+
+TODO:
+    - What should be the right balance:
+        `dp_arr = dp_hat_W*weight_W + dp_hat_P*weight_P`. This balance depends
+        on the state of the solution. If the solution is overly diffusive
+        than, unless `weight_P` is very small, the solution continues on to
+        diffuse out. The reverse happens when the solution is very sharp; i.e.
+        in such a case, the solution becomes sharper unless `weight_W` is very
+        small. In summary, the solution tends either towards over-diffusion or
+        ultra-sharpness.
+
+    - Try optimizing over a subdomain only. How about having a 2D array of
+    subdomains.
+
+    - Acceleration of convergence using the history of the sesnitivities.
+    - External phasefield evolution function could be beneficial. Adding it
+    will decouple the potential energy and the regularizing penalty in the
+    total cost functional.
+    - When the cost functional is compoxed of multiple terms, the relative
+    size of the terms becomes import. How to make it independent ? One way is
+    to have a separate solver for the phase field -- we are back at it again.
+
+NOTES:
+    - Assuming C:=f(p) does not depend on `u`; hence,
+    dCdu := derivative(C, u) = 0
+
+    - having the phasefield evolution inside the total cost functional requires
+    to solve the adjoint problem. The relative magnitues of different terms in
+    the total cost function matter; e.g. if the BC are changed the these terms
+    will grow appart.
+
+    - If the phase field could be written in a separate function the
+    adjoint would not need to be solved; however, the phasefield equation would
+    need to be solved separately; thus, need to privded another functional.
+
+    IMPORTANT
+    - Penalty in total cost does not work so well becaus the action of pentlay is
+    explicit, i.e. it has not effect at the start of the simulation. Need to be
+    able to penalize after the gradient is computed based on energy dissipation.
+
+    - The downside of smoothing is that the evolution of phasefield is not maximal
+    because the energetically favourable vector is diffused.
+
+    - So, what should you smooth? Energ gradient or the phasefield advance vector?
+
+    - Note, the dissipation should be very local, so you should not diffuse too much.
+    When using diffusion, need to recover the locality of dissipation, so map the
+    dissipaton using an exponential function.
+
+    - Thresholding phaseifled increments does not work so well
+
+    - There was a proble with enforcing the equality constraint after the increment
+    in phasefield because the phasefield increment would decrease to enforce constraint.
+    This means phasefield almost never reaches 1.0.
+
+    Problems
+    --------
+    - Mesh dependence, increasing diffusivity does not help; actually, it makes
+    the problem worse, the diffusion becomes highly anisotropic. The remedy is
+    to refine the mesh.
+
+
+### Convert images to movie
+
  Convert images to mp4:
  $ ffmpeg -framerate 24 -i img%03d.png output.mp4
 
@@ -9,3 +75,4 @@ K.set(np.array([[10,20,30]]), [0],[0,1,2])
 K.get_diagonal(u.vector())
 K.set_diagonal(u.vector())
 K.apply('add')
+

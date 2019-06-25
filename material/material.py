@@ -16,8 +16,10 @@ from dolfin import det
 from dolfin import diff
 from dolfin import dot
 from dolfin import grad
+from dolfin import inner
 from dolfin import inv
 from dolfin import ln
+from dolfin import sym
 from dolfin import tr
 
 logger = logging.getLogger()
@@ -98,6 +100,43 @@ class MaterialModelBase:
         '''Material model Second Piola-Kirchhoff stress measure.'''
         if not self.is_finalized(): raise RuntimeError('Not finalized.')
         return self.pk2 if self._to_return_iterable else self.pk2[0]
+
+
+class LinearElasticModel(MaterialModelBase):
+    def finalize(self, u):
+        super().finalize(u)
+
+        I = Identity(len(u))
+        eps = sym(grad(u))
+
+        for m in self.material_parameters:
+
+            E  = m.get('E',  None)
+            nu = m.get('nu', None)
+
+            mu = m.get('mu', None)
+            lm = m.get('lm', None)
+
+            if mu is None:
+                if E is None or nu is None:
+                    raise RuntimeError('Material model requires parameter "mu"; '
+                                       'otherwise, require parameters "E" and "nu".')
+
+                mu = E/(2*(1 + nu))
+
+            if lm is None:
+                if E is None or nu is None:
+                    raise RuntimeError('Material model requires parameter "lm"; '
+                                       'otherwise, require parameters "E" and "nu".')
+
+                lm = E*nu/((1 + nu)*(1 - 2*nu))
+
+            sig = 2*mu*eps + lm*tr(eps)*I
+            psi = 0.5 * inner(sig, eps)
+
+            self.psi.append(psi)
+            self.pk1.append(sig)
+            self.pk2.append(sig)
 
 
 class NeoHookeanModel(MaterialModelBase):
