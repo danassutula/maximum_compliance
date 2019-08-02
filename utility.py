@@ -16,12 +16,14 @@ WRITE_NPY_DISPLACEMENTS = False
 WRITE_PVD_PHASEFIELDS = True
 WRITE_NPY_PHASEFIELDS = False
 
+EPS = 1e-12
+
 
 class SolutionWriter:
 
     SAFE_TO_REMOVE_FILE_TYPES = ('.pvd', '.vtu', '.npy')
 
-    def __init__(self, outdir, u, p, period=1):
+    def __init__(self, outdir, u, p, writing_period=1):
 
         if not isinstance(u, Function):
             raise TypeError
@@ -41,7 +43,8 @@ class SolutionWriter:
 
         self.count_calls = 0
         self.index_write = 0
-        self.period = period
+
+        self.writing_period = writing_period
 
         domain_size = assemble(1*dx(p.function_space().mesh()))
         self._ufl_form_p_mean = Constant(1.0/domain_size)*p*dx
@@ -59,7 +62,7 @@ class SolutionWriter:
 
     def periodic_write(self):
 
-        if self.count_calls % self.period:
+        if self.count_calls % self.writing_period:
             self.count_calls += 1; return
 
         self.write()
@@ -123,72 +126,161 @@ def remove_outfiles(subdir, file_extensions):
                 os.remove(item)
 
 
-### Phasefield initialization
+def unit_square_mesh(number_of_cells_along_edge,
+                     mesh_pattern="left/right",
+                     offset=(-0.5,-0.5), scale=1):
+    '''
+    Parameters
+    ----------
+    number_of_cells_along_edge: int
+        Number of cells along edge.
+    mesh_pattern: str
+        Possible options: "left/right", "crossed", "left", or "right".
 
-def insert_defect(p, xc, r):
+    '''
 
-    V = p.function_space()
-    p_arr = p.vector().get_local()
+    if not hasattr(offset, '__len__') or len(offset) != 2:
+        raise TypeError('Parameter `offset` must be a sequence of length `2`.')
 
-    x = V.tabulate_dof_coordinates()
-    s = ((x-xc)**2).sum(axis=1)
+    nx = ny = number_of_cells_along_edge
+    mesh = dolfin.UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
 
-    p_arr[s < r**2] = 1.0
-    p.vector()[:] = p_arr
+    mesh.translate(dolfin.Point(*offset))
+    mesh.scale(scale)
 
-def meshgrid_uniform(xlim, ylim, nx, ny):
-
-    x0, x1 = xlim
-    y0, y1 = ylim
-
-    x = np.linspace(x0, x1, nx)
-    y = np.linspace(y0, y1, ny)
-
-    x, y = np.meshgrid(x, y)
-
-    x = x.reshape((-1,))
-    y = y.reshape((-1,))
-
-    return np.stack((x, y), axis=1)
-
-def meshgrid_checker(xlim, ylim, nx, ny):
-
-    x0, x1 = xlim
-    y0, y1 = ylim
-
-    nx_B = int(nx/2)
-    nx_A = nx - nx_B
-
-    ny_B = int(ny/2)
-    ny_A = ny - ny_B
-
-    assert nx_A >= nx_B
-    assert ny_A >= ny_B
-
-    dx = (x1 - x0) / (nx - 1)
-    dy = (y1 - y0) / (ny - 1)
-
-    if nx_A == nx_B:
-        xlim_A = (x0, x1-dx)
-        xlim_B = (x0+dx, x1)
-    else:
-        xlim_A = (x0, x1)
-        xlim_B = (x0+dx, x1-dx)
-
-    if ny_A == ny_B:
-        ylim_A = (y0, y1-dy)
-        ylim_B = (y0+dy, y1)
-    else:
-        ylim_A = (y0, y1)
-        ylim_B = (y0+dy, y1-dy)
-
-    grid_A = meshgrid_uniform(xlim_A, ylim_A, nx_A, ny_A)
-    grid_B = meshgrid_uniform(xlim_B, ylim_B, nx_B, ny_B)
-
-    return np.concatenate((grid_A, grid_B), axis=0)
+    return mesh
 
 
-### Plotting
+def boundaries_of_rectangular_domain(mesh):
+
+    x0, y0 = mesh.coordinates().min(0)
+    x1, y1 = mesh.coordinates().max(0)
+
+    atol_x = (x1 - x0) * EPS
+    atol_y = (y1 - y0) * EPS
+
+    bot = dolfin.CompiledSubDomain('x[1] < y0 && on_boundary', y0=y0+atol_y)
+    rhs = dolfin.CompiledSubDomain('x[0] > x1 && on_boundary', x1=x1-atol_x)
+    top = dolfin.CompiledSubDomain('x[1] > y1 && on_boundary', y1=y1-atol_y)
+    lhs = dolfin.CompiledSubDomain('x[0] < x0 && on_boundary', x0=x0+atol_x)
+
+    return bot, rhs, top, lhs
+
+
+class PeriodicBoundaries(dolfin.SubDomain):
+    '''Top boundary is slave boundary wrt bottom (master) boundary.
+    Right boundary is slave boundary wrt left (master) boundary.'''
+
+    def __init__(self, mesh):
+        super().__init__() # !!!
+
+        x0, y0 = mesh.coordinates().min(0)
+        x1, y1 = mesh.coordinates().max(0)
+
+        self.L = x1 - x0
+        self.H = y1 - y0
+
+        self.x_lhs = x0 + EPS*self.L
+        self.y_bot = y0 + EPS*self.H
+
+        self.x_rhs = x1 - EPS*self.L
+        self.y_top = y1 - EPS*self.H
+
+    def inside(self, x, on_boundary):
+        '''Check if `x` is on the slave boundary'''
+        return on_boundary and \
+            ((x[0] > self.x_rhs and x[1] > self.y_bot) or
+             (x[0] > self.x_lhs and x[1] > self.y_top))
+
+    def map(self, x, y):
+        '''Map master point `x` to slave point `y`.'''
+
+        y[0] = x[0]
+        y[1] = x[1]
+
+        if x[0] < self.x_lhs and x[1] > self.y_top:
+            pass
+
+        elif x[0] > self.x_rhs and x[1] < self.y_bot:
+            pass
+
+        elif x[0] < self.x_lhs:
+            y[0] += self.L
+
+        elif x[1] < self.y_bot:
+            y[1] += self.H
+
+
+def uniform_biaxial_extension_bcs(V):
+    '''
+
+    Parameters
+    ----------
+    V: dolfin.FunctionSpace
+        Vector function space for the displacement field.
+
+    '''
+
+    mesh = V.mesh()
+
+    boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
+        boundaries_of_rectangular_domain(mesh)
+
+    uy_bot = Constant(0)
+    ux_rhs = Constant(0)
+    uy_top = Constant(0)
+    ux_lhs = Constant(0)
+
+    bcs = [
+        dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+        dolfin.DirichletBC(V.sub(0), ux_rhs, boundary_rhs),
+        dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+        dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
+        ]
+
+    def bcs_set_value(value):
+        uy_bot.assign(-value)
+        ux_rhs.assign(+value)
+        uy_top.assign(+value)
+        ux_lhs.assign(-value)
+
+    return bcs, bcs_set_value
+
+
+def uniform_uniaxial_extension_bcs(V):
+    '''
+
+    Parameters
+    ----------
+    V: dolfin.FunctionSpace
+        Vector function space for the displacement field.
+
+    '''
+
+    mesh = V.mesh()
+
+    boundary_bot, _, boundary_top, _ = \
+        boundaries_of_rectangular_domain(mesh)
+
+    uy_bot = Constant(0)
+    uy_top = Constant(0)
+
+    ux_swc = Constant(0) # South-West corner
+    ux_nwc = Constant(0) # North-West corner
+
+    bcs = [
+        dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+        dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+        dolfin.DirichletBC(V.sub(0), ux_swc, boundary_top),
+        dolfin.DirichletBC(V.sub(0), ux_nwc, boundary_bot),
+        ]
+
+    def bcs_set_value(value):
+        uy_bot.assign(-value)
+        uy_top.assign(+value)
+
+    return bcs, bcs_set_value
+
 
 def plot_energy_vs_iterations(potential_vs_iteration,
                               figname="energy_vs_iterations",
@@ -245,4 +337,3 @@ def plot_phasefiled(p, figname="final_phasefield"):
     fh.show()
 
     return fh, figname
-

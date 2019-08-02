@@ -75,4 +75,3 @@ K.set(np.array([[10,20,30]]), [0],[0,1,2])
 K.get_diagonal(u.vector())
 K.set_diagonal(u.vector())
 K.apply('add')
-

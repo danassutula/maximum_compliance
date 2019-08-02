@@ -1,7 +1,6 @@
 
 from . import config
-from . import utility
+from . import filter
+from . import helper
 
-from .optim import TopologyOptimizer
-from .utility import DiffusionFilter
-# from .utility import GradientFilter
+from .optim  import TopologyOptimizer

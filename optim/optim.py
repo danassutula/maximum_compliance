@@ -19,25 +19,22 @@ from dolfin import dot
 from dolfin import dx
 
 from . import config
-from . import utility
-
+logger = config.logger
 
 EPS = 1e-12
-
 SEQUENCE_TYPES = (tuple, list)
-logger = config.logger
 
 
 class TopologyOptimizer:
     '''Minimize a cost functional.'''
 
-    def __init__(self, W, P, C, p, p_locals, u, bcs_u, external_function=None):
+    def __init__(self, F, W, P, C, p, p_locals, u, bcs_u, external_callable=None):
         '''
 
         Parameters
         ----------
         W : dolfin.Form
-            Potential energy to be minimized.
+            Either potential or strain energy to be minimized.
         P : dolfin.Form
             Functional that is a measure of the roughness of the phasefield.
             Note, this functional acts like penaly; that is, it modifies the
@@ -49,30 +46,19 @@ class TopologyOptimizer:
             Global phasefield function.
         p_locals : (sequence of) dolfin.Function(s)
             Local phasefield functions. Note, the sum of the local phasefield
-            functions should be equal to the global phasefield function.
+            functions will be automatically assigned to the global phasefield.
         u : dolfin.Function
-            Displacement field.
+            Displacement/mixed field.
         bcs_u : (sequence of) dolfin.DirichletBC(s)
-            Displacement field boundary conditions.
-        alpha : float
-            Parameter that is used to determine the implicit boundary of a
-            phasefield. The value must be in range `(0, 1)`. The lower bound
-            value of `0` means the phasefield boundary is the boundary of the
-            domain where the phasefield is defined; the upper bound value of
-            `1` -- the boundary of the domain where the phasefield is 1.0.
-        kappa : float or dolfin.Constant
-            Viscosity/diffusion-like parameter that regularizes the phasefield
-            distance problem so that it can be solved uniquely.
-        gamma : float or dolfin.Constant
-            Penalty-like parameter used to weakly impose the zero-distance
-            Dirichlet boundary condition on the phasefield distance solution.
-        external_function : callable
-            Function that is to be called at each iteration of the solver.
+            Displacement/mixed field boundary conditions.
+        external_callable : callable
+            Function to be called at each iteration of the solver. The function
+            will typically be responsible for recording the solution variables.
 
         '''
 
-        if external_function is not None and not callable(external_function):
-            raise TypeError('Parameter `external_function` must be callable.')
+        if external_callable is not None and not callable(external_callable):
+            raise TypeError('Parameter `external_callable` must be callable.')
 
         alpha = config.parameters_distance_solver['alpha']
         kappa = config.parameters_distance_solver['kappa']
@@ -94,15 +80,30 @@ class TopologyOptimizer:
                 raise TypeError('`config.parameters_distance_solver[\'gamma\']`')
             gamma = Constant(gamma)
 
-        self._alpha = alpha
-        self._kappa = kappa
-        self._gamma = gamma
+        self._u = u
+        self._p = p
+        self._p_locals = None
+
+        self._p_vec_global = p.vector()
+        self._p_vec_locals = None
+        self._d_arr_locals = None
+
+        self._collision_distance = None
+
+        self._distance_solver = DistanceSolver(
+            p.function_space(), kappa, gamma)
+
+        self.parameters_distance_solver = dict(
+            alpha=alpha, kappa=kappa, gamma=gamma)
+
+        self._initialize_local_phasefields(p_locals)
 
         self._W = W
         self._P = P
 
         self._dWdp = derivative(W, p)
         self._dPdp = derivative(P, p)
+        self._dFdu = derivative(F, u)
 
         if isinstance(C, SEQUENCE_TYPES):
             self._C = C if isinstance(C, tuple) else tuple(C)
@@ -112,35 +113,22 @@ class TopologyOptimizer:
             self._dCdp = (derivative(C, p),)
 
         self._dCdp_arr = tuple(assemble(dCidp).get_local() for dCidp in self._dCdp)
-        self._abstol_C = tuple(np.abs(dCidp).sum()*EPS for dCidp in self._dCdp_arr)
+        self._tol_C = tuple(np.abs(dCidp).sum()*EPS for dCidp in self._dCdp_arr)
         self._dp_C_arr = self._constraint_correction_vectors(self._dCdp_arr)
 
-        F = derivative(W, u)
-        dFdu = derivative(F, u)
-
         self._nonlinear_solver = dolfin.NonlinearVariationalSolver(
-            dolfin.NonlinearVariationalProblem(F, u, bcs_u, dFdu))
+            dolfin.NonlinearVariationalProblem(F, u, bcs_u, self._dFdu))
         self._solve_equilibrium_problem = self._nonlinear_solver.solve
 
-        self._distance_solver = DistanceSolver(
-            p.function_space(), kappa, gamma)
-
-        self._u = u
-        self._p = p
-
-        self._p_vec_global = p.vector()
-
-        self.initialize_local_phasefields(p_locals)
-
-        utility.update_lhs_parameters_from_rhs(
+        self._update_parameters(
             self._nonlinear_solver.parameters,
             config.parameters_nonlinear_solver)
 
         self.parameters_topology_solver = \
             config.parameters_topology_solver.copy()
 
-        self.external_function = external_function \
-            if external_function is not None else lambda : None
+        self.external_callable = external_callable \
+            if external_callable is not None else lambda : None
 
 
     def solve_equilibrium_problem(self):
@@ -148,12 +136,7 @@ class TopologyOptimizer:
         return self._solve_equilibrium_problem()
 
 
-    def initialize_phasefield_distances(self):
-        '''Initialize local phasefield distances.'''
-        self._solve_phasefield_distances(init=True)
-
-
-    def initialize_local_phasefields(self, p_locals):
+    def _initialize_local_phasefields(self, p_locals):
 
         if isinstance(p_locals, tuple):
             self._p_locals = p_locals
@@ -178,106 +161,106 @@ class TopologyOptimizer:
         self._p_vec_locals = tuple(p_i.vector() for p_i in self._p_locals)
         self._d_arr_locals = np.zeros((len(self._p_locals), V_p.dim()))
 
-        # Initialize local phasefield distances
-        self._solve_phasefield_distances(init=True)
+        self._initialize_phasefield_distances() # -> self._d_arr_locals (approximate)
+        self._solve_phasefield_distances() # -> self._d_arr_locals (correct solution)
+
+        if len(p_locals) == 1:
+            self._apply_collision_prevention = lambda p_arr : None
 
 
-    def optimize(self, stepsize, smoothing_weight, minimum_distance,
-                 convergence_tolerance=None, maximum_iterations=None,
-                 maximum_divergences=None):
+    def optimize(self, stepsize, penalty_weight, collision_distance,
+                 convergence_tolerance=None, minimum_convergences=None,
+                 maximum_divergences=None, maximum_iterations=None):
         '''
         Parameters
         ----------
         stepsize : float
             Phasefield stepsize. More precisely, it is the maximum nodal change
             in the phasefield per iteration, i.e. the l_inf norm of the change.
-        smoothing_weight : float
+        penalty_weight : float
             Factor weighting the amount of phasefield regularity (`P`) relative
             to the amount of phasefield strain energy (`W`) dissipationt.
-        minimum_distance : float
-            Minimum distance between local phasefields. The distance acts as
-            a constraint that prevents phasefield collisions/intersections.
+        collision_distance : float
+            Minimum distance between local phasefields including blending branch.
 
         Returns
         -------
         iterations_count : int
             Number of iterations.
-        is_converged : bool
-            Wheather the solver converged.
         potentials : list of float's
             The value of potential energy for each iteration.
 
         '''
 
         if stepsize <= 0.0:
-            raise ValueError('Require `stepsize` to be positive')
+            raise ValueError('Require `stepsize > 0`')
 
-        if minimum_distance < 0.0:
-            raise ValueError('Parameter `minimum_distance` must be non-negative.')
+        if collision_distance < 0.0:
+            raise ValueError('Require `collision_distance > 0`')
 
-        if not 0.0 <= smoothing_weight <= 1.0:
-            raise ValueError('Parameter `smoothing_weight` must be between `0` and `1`.')
+        if not 0.0 <= penalty_weight <= 1.0:
+            raise ValueError('Require `0 <= penalty_weight <= 1`.')
 
-        prm = self.parameters_topology_solver
-
-        if maximum_iterations is None:
-            maximum_iterations = prm['maximum_iterations']
-
-        if maximum_divergences is None:
-            maximum_divergences = prm['maximum_divergences']
+        parameters = self.parameters_topology_solver
 
         if convergence_tolerance is None:
-            convergence_tolerance = prm['convergence_tolerance']
+            convergence_tolerance = parameters['convergence_tolerance']
 
-        if maximum_iterations < 0:
-            raise ValueError('Require non-negative `maximum_iterations`.')
+        if minimum_convergences is None:
+            minimum_convergences = parameters['minimum_convergences']
 
-        if maximum_divergences < 0:
-            raise ValueError('Require non-negative `maximum_divergences`.')
+        if maximum_divergences is None:
+            maximum_divergences = parameters['maximum_divergences']
+
+        if maximum_iterations is None:
+            maximum_iterations = parameters['maximum_iterations']
 
         if convergence_tolerance < 0:
             raise ValueError('Require non-negative `convergence_tolerance`.')
 
-        weight_P = smoothing_weight
-        weight_W = 1.0 - weight_P
+        if minimum_convergences < 0:
+            raise ValueError('Require non-negative `minimum_convergences`.')
 
-        p_arr = sum(self._p_vec_locals).get_local()
-        dp_arr = 0.0 # np.zeros((len(p_arr,))) # Dummy
+        if maximum_divergences < 0:
+            raise ValueError('Require non-negative `maximum_divergences`.')
 
-        # This solves for `self._d_arr_locals`
-        self._solve_phasefield_distances()
+        if maximum_iterations < 0:
+            raise ValueError('Require non-negative `maximum_iterations`.')
 
-        if (self._d_arr_locals[:,0] == np.inf).all():
+        self._collision_distance = collision_distance
+
+        if (self._d_arr_locals[:,0] == 0).all() or \
+           (self._d_arr_locals[:,0] == np.inf).all():
             raise RuntimeError('Ill-defined phasefields.')
 
+        p_arr = sum(self._p_vec_locals).get_local()
+        dp_arr = 0.0 # np.zeros((len(p_arr,)))
+
+        self._apply_phasefield_constraints(p_arr)
+        self._assign_phasefield_values(p_arr)
+        self._solve_phasefield_distances()
+
+        weight_P = penalty_weight
+        weight_W = 1.0 - weight_P
+
+        convergences_count = -1
         divergences_count = 0
         iterations_count = 0
-        is_converged = False
+        is_converged = None
 
         potentials = []
-        W_cur = np.inf
+        W_min = np.inf
 
         while True:
 
             p_arr_prv = p_arr
             p_arr = p_arr + dp_arr
 
-            ### Update phasefields (estimated)
-
+            self._apply_collision_prevention(p_arr)
             self._apply_phasefield_constraints(p_arr)
+
             self._assign_phasefield_values(p_arr)
-
-            ### Phasefield collisions
-
-            self._solve_phasefield_distances() # Updates `self._d_arr_locals`
-            p_arr[(self._d_arr_locals < minimum_distance).sum(0) > 1] = 0.0
-
-            ### Update phasefields (corrected)
-
-            self._apply_phasefield_constraints(p_arr)
-            self._assign_phasefield_values(p_arr)
-
-            ### Solve equilibrium problem
+            self._solve_phasefield_distances()
 
             _, b = self._solve_equilibrium_problem()
 
@@ -285,9 +268,8 @@ class TopologyOptimizer:
                 logger.error('Displacement problem could not be solved')
                 break
 
-            ### Report
+            ### Report iteration
 
-            W_prv = W_cur
             W_cur = assemble(self._W)
             potentials.append(W_cur)
 
@@ -299,85 +281,101 @@ class TopologyOptimizer:
                         f'potential:{W_cur: 11.5e}, '
                         f'|dp|/|p|:{change_p: 8.2e}')
 
-            self.external_function()
+            self.external_callable()
 
             ### Assess convergence
 
-            if change_p < convergence_tolerance and iterations_count:
-                logger.info('Negligible phase-field change (break)')
-                is_converged = True
-                break
-
-            if W_prv < W_cur:
-                logger.warning('Iterations diverged (energy did not decrease)')
-
+            if W_cur < W_min:
+                W_min = W_cur
+                divergences_count = 0
+            else:
                 divergences_count += 1
-
                 if divergences_count > maximum_divergences:
-                    logger.error('Reached maximum number of diverged iterations')
-
-                    # Assign previous phasefield solution
-                    # NOTE: `p_arr_prv` satisfies constraints
-                    self._assign_phasefield_values(p_arr_prv)
-
-                    _, b = self._solve_equilibrium_problem()
-
-                    if not b:
-                        logger.error('Displacement problem could not be solved')
-
+                    logger.error('Reached maximum number of divergences [BREAK]')
+                    is_converged = False
                     break
 
-            if iterations_count == maximum_iterations:
-                logger.error('Reached maximum number of iterations (break)')
-                break
+            if change_p > convergence_tolerance:
+                convergences_count = 0
+            else:
+                convergences_count += 1
+                if convergences_count >= minimum_convergences:
+                    logger.info('Reached minimum number of convergences [BREAK]')
+                    is_converged = True
+                    break
 
-            iterations_count += 1
+            if iterations_count >= maximum_iterations:
+                logger.error('Reached maximum number of iterations [BREAK]')
+                is_converged = False
+                break
 
             ### Estimate phasefield change
 
             x_W = assemble(self._dWdp).get_local()
             x_P = assemble(self._dPdp).get_local()
 
-            # Orthogonalize with respect to constraint vectors
+            # Orthogonalize with respect to (orthogonal) constraints
             for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
                 x_W -= dp_C_i * (x_W.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
                 x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
 
+            # Weighted-average phasefield advance direction
             dp_arr = x_W * (-weight_W/math.sqrt(x_W.dot(x_W))) \
                    + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
 
+            # NOTE: Results using L_inf-norm are inferior to L_2-norm
+            # dp_arr = x_W * (-weight_W/max(-x_W.min(), x_W.max())) \
+            #        + x_P * (-weight_P/max(-x_P.min(), x_P.max()))
+
+            # Enforce phasefield lower and upper bounds
             dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0
             dp_arr[(p_arr == 1.0) & (dp_arr > 0.0)] = 0.0
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
 
-        if not is_converged:
-            if prm['error_on_nonconvergence']:
-                raise RuntimeError('Iterations did not converge.')
+            iterations_count += 1
 
         return iterations_count, is_converged, potentials
 
 
-    def _solve_phasefield_distances(self, init=False):
-        '''Compute distances to local phasefields.
+    def _initialize_phasefield_distances(self):
+        '''Initialize distances to local phasefields.'''
 
-        Parameters
-        ----------
-        init : bool (optional)
-            Wheather to just initialize or solve the distance problem.
-
-        '''
-
-        if init: compute_dofs = self._distance_solver.compute_initdist_dofs
-        else: compute_dofs = self._distance_solver.compute_distance_dofs
+        compute_dofs = self._distance_solver.compute_initdist_dofs
         mark_cells = self._distance_solver.mark_zero_distance_cells
+        threshold = self.parameters_distance_solver['alpha']
 
         for p_i, d_arr_i in zip(self._p_locals, self._d_arr_locals):
 
-            if mark_cells(p_i, self._alpha):
+            if mark_cells(p_i, threshold):
                 compute_dofs(d_arr_i)
             else:
                 d_arr_i[:] = np.inf
+
+
+    def _solve_phasefield_distances(self):
+        '''Update distances to local phasefields.'''
+
+        compute_dofs = self._distance_solver.compute_distance_dofs
+        mark_cells = self._distance_solver.mark_zero_distance_cells
+        threshold = self.parameters_distance_solver['alpha']
+
+        for p_i, d_arr_i in zip(self._p_locals, self._d_arr_locals):
+
+            if mark_cells(p_i, threshold):
+                compute_dofs(d_arr_i)
+            else:
+                d_arr_i[:] = np.inf
+
+
+    def _apply_collision_prevention(self, p_arr):
+
+        # NOTE: The "distance" needs to be defined as the second smallest distance
+        # because the smallest value just is a reference to a particular phasefield.
+
+        mask = (self._d_arr_locals < self._collision_distance).sum(0) > 1
+        s = np.sort(self._d_arr_locals[:,mask], 0)[1] / self._collision_distance
+        p_arr[mask] *= self._collision_smoothing_weight(s)
 
 
     def _apply_phasefield_constraints(self, p_arr):
@@ -392,8 +390,8 @@ class TopologyOptimizer:
 
         p0_arr = self._p_vec_global.get_local()
 
-        for C_i, dCdp_i, dp_C_i, abstol_C_i in zip(
-                self._C, self._dCdp_arr, self._dp_C_arr, self._abstol_C):
+        for C_i, dCdp_i, dp_C_i, tol_C_i in zip(
+                self._C, self._dCdp_arr, self._dp_C_arr, self._tol_C):
 
             C_i = assemble(C_i)
             dp_C_i = dp_C_i.copy()
@@ -406,11 +404,11 @@ class TopologyOptimizer:
 
             R_i = C_i + dCdp_i.dot(p_arr-p0_arr)
 
-            while abs(R_i) > abstol_C_i:
+            while abs(R_i) > tol_C_i:
 
                 dRdp_C_i = dCdp_i.dot(dp_C_i)
 
-                if abs(dRdp_C_i) < abstol_C_i:
+                if abs(dRdp_C_i) < tol_C_i:
                     raise RuntimeError('Unable to enforce equality constraints.')
 
                 dp_C_i *= -R_i/dRdp_C_i
@@ -433,8 +431,8 @@ class TopologyOptimizer:
 
         self._p_vec_global[:] = p_arr
 
-        assert all(abs(assemble(C_i)) < abstol_C_i
-            for C_i, abstol_C_i in zip(self._C, self._abstol_C))
+        assert all(abs(assemble(C_i)) < tol_C_i
+            for C_i, tol_C_i in zip(self._C, self._tol_C))
 
         # Closest phasefield indices (at dof positions)
         phasefield_dofmap = self._d_arr_locals.argmin(0)
@@ -472,7 +470,7 @@ class TopologyOptimizer:
             for A_j in A[i+1:]:
                 A_j[A_i] = False
 
-        # Constraint correction vectors
+        # Decoupled constraint correction vectors
         dp_C = tuple(A_i.astype(float) for A_i in A)
 
         assert all(abs(v_i.dot(v_j)) < EPS*min(v_j.dot(v_j), v_i.dot(v_i))
@@ -480,6 +478,35 @@ class TopologyOptimizer:
             'Constraint correction vectors are not mutually orthogonal.'
 
         return dp_C
+
+
+    @staticmethod
+    def _collision_smoothing_weight(s):
+        '''Regularized step function.'''
+        return 3*s**2 - 2*s**3
+
+
+    @classmethod
+    def _update_parameters(cls, target, source):
+        '''Update dict-like `target` with dict-like `source`.'''
+
+        for k in source.keys():
+
+            if k not in target.keys():
+                raise KeyError(k)
+
+            if hasattr(target[k], 'keys'):
+
+                if not hasattr(source[k], 'keys'):
+                    raise TypeError(f'`source[{k}]` must be dict-like.')
+                else:
+                    cls._update_parameters(target[k], source[k])
+
+            elif hasattr(source[k], 'keys'):
+                raise TypeError(f'`source[{k}]` can not be dict-like.')
+
+            else:
+                target[k] = source[k]
 
 
 class DistanceSolver:
@@ -518,8 +545,9 @@ class DistanceSolver:
 
         x = mesh.coordinates()
         l0 = (x.max(0)-x.min(0)).min()
+        he = mesh.hmax()
 
-        scaled_penalty = penalty / l0
+        scaled_penalty = penalty/(l0*he)
         target_gradient = Constant(1.0)
 
         self._mf = dolfin.MeshFunction('size_t', mesh, mesh.geometric_dimension())
@@ -570,28 +598,26 @@ class DistanceSolver:
 
         return self._mf.array().any()
 
-    def compute_initdist_dofs(self, x=None):
+    def compute_initdist_dofs(self, x):
+        self._solve_initdist_problem()
+        x[:] = self._d_vec.get_local()
 
-        if x is not None:
-            self._solve_initdist_problem()
-            x[:] = self._d_vec.get_local()
-        else:
-            self._solve_initdist_problem()
-            x = self._d_vec.get_local()
+    def compute_distance_dofs(self, x):
 
-        return x
+        self._d_vec[:] = x
 
-    def compute_distance_dofs(self, x=None):
-
-        if x is not None:
-            self._d_vec[:] = x
+        try:
             self._solve_distance_problem()
-            x[:] = self._d_vec.get_local()
-        else:
-            self._solve_distance_problem()
-            x = self._d_vec.get_local()
+        except RuntimeError:
+            logger.error('Could not solve distance problem with previous solution as '
+                         'initial solution. Attempting to re-initialize and re-solve.')
+            self._solve_initdist_problem()
+            try:
+                self._solve_distance_problem()
+            except RuntimeError:
+                raise RuntimeError('Could not solve distance problem on second attempt.')
 
-        return x
+        x[:] = self._d_vec.get_local()
 
     def compute_distance_function(self, p, alpha, init=True):
         '''Compute distance to thresholded phasefield boundary.'''

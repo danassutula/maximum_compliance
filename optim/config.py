@@ -29,16 +29,16 @@ logger = logging.getLogger()
 
 
 parameters_topology_solver = {
-    'maximum_iterations': 500,
-    'maximum_divergences': 0,
     'convergence_tolerance': 1e-3,
-    'error_on_nonconvergence': False,
+    'minimum_convergences': 3,
+    'maximum_divergences': 2,
+    'maximum_iterations': 2000,
     }
 
 parameters_distance_solver = {
-    'alpha': 0.30,
-    'kappa': 5e-2,
-    'gamma': 1e6,
+    'alpha': 1/3, # Lower bound value defining the phasefield boundary
+    'kappa': 2e-3, # Stabilization for the boundary distance solution
+    'gamma': 1e5,  # Penalty that weakly enforces zero-distance BC's
     }
 
 parameters_nonlinear_solver = {

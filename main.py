@@ -4,6 +4,17 @@ Created on 01/10/2018
 
 @author: Danas Sutula
 
+
+### Update phasefields (estimated)
+
+# self._apply_phasefield_constraints(p_arr)
+# self._assign_phasefield_values(p_arr)
+
+### Handle phasefield collisions
+
+# self._compute_phasefield_distances() # -> `self._d_arr_locals`
+# p_arr[(self._d_arr_locals < minimum_distance).sum(0) > 1] = 0.0
+
 """
 
 import config

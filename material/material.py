@@ -29,9 +29,6 @@ class DeformationMeasures:
     def __init__(self, u):
         '''Deformation measures.'''
 
-        if not isinstance(u, Function):
-            raise TypeError('Parameter `u` must be a `dolfin.Function`.')
-
         self.d = d = len(u)
         self.I = I = Identity(d)
         self.F = F = variable(I + grad(u))
@@ -49,7 +46,7 @@ class MaterialModelBase:
     def __init__(self, material_parameters, u=None):
         '''Base class for deriving a specific material model.'''
 
-        if isinstance(material_parameters, (list,tuple)):
+        if isinstance(material_parameters, (list, tuple)):
             self.material_parameters = material_parameters
             self.deformation_measures = None
             self._to_return_iterable = True
@@ -67,12 +64,12 @@ class MaterialModelBase:
         self.pk2 = [] # Second Piola-Kirchhoff stress
 
         if u is not None:
-            self.finalize(u)
+            self.initialize_with_field(u)
 
-    def finalize(self, u):
+    def initialize_with_field(self, u):
         '''To be extended by derived class.'''
 
-        if self.is_finalized():
+        if self.is_initialized():
             logger.info('Re-finalizing material model.')
 
             self.psi.clear()
@@ -81,30 +78,30 @@ class MaterialModelBase:
 
         self.deformation_measures = DeformationMeasures(u)
 
-    def is_finalized(self):
-        '''Check if finalized (by derived class)'''
+    def is_initialized(self):
+        '''Check if initialized (by derived class)'''
         return self.deformation_measures and \
             self.psi and self.pk1 and self.pk2
 
     def strain_energy_density(self):
         '''Material model strain energy density.'''
-        if not self.is_finalized(): raise RuntimeError('Not finalized.')
+        if not self.is_initialized(): raise RuntimeError('Not initialized.')
         return self.psi if self._to_return_iterable else self.psi[0]
 
     def stress_measure_pk1(self):
         '''Material model First Piola-Kirchhoff stress measure.'''
-        if not self.is_finalized(): raise RuntimeError('Not finalized.')
+        if not self.is_initialized(): raise RuntimeError('Not initialized.')
         return self.pk1 if self._to_return_iterable else self.pk1[0]
 
     def stress_measure_pk2(self):
         '''Material model Second Piola-Kirchhoff stress measure.'''
-        if not self.is_finalized(): raise RuntimeError('Not finalized.')
+        if not self.is_initialized(): raise RuntimeError('Not initialized.')
         return self.pk2 if self._to_return_iterable else self.pk2[0]
 
 
 class LinearElasticModel(MaterialModelBase):
-    def finalize(self, u):
-        super().finalize(u)
+    def initialize_with_field(self, u):
+        super().initialize_with_field(u)
 
         I = Identity(len(u))
         eps = sym(grad(u))
@@ -140,8 +137,8 @@ class LinearElasticModel(MaterialModelBase):
 
 
 class NeoHookeanModel(MaterialModelBase):
-    def finalize(self, u):
-        super().finalize(u)
+    def initialize_with_field(self, u):
+        super().initialize_with_field(u)
 
         d  = self.deformation_measures.d
         F  = self.deformation_measures.F

@@ -4,6 +4,14 @@ Created on 01/10/2018
 
 @author: Danas Sutula
 
+Todos
+-----
+Need to come up with a criterion for stopping the incrementation of phasefield
+volume fraction. The phasefield is always successful in finding a more optimal
+phasefield for a given phasefield volume fraction; however, after some phasefield
+volume fraction value, it does not make sense to continue trying to optimize.
+
+
 """
 
 import config
@@ -30,38 +38,8 @@ import utility
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-
-# TEMP
-def plot(*args, **kwargs):
-    '''Plot either `np.ndarray`s or something plottable from `dolfin`.'''
-    plt.figure(kwargs.pop('name', None))
-    if isinstance(args[0], (np.ndarray, list, tuple)):
-        plt.plot(*args, **kwargs)
-    else: # just try it anyway
-        dolfin.plot(*args, **kwargs)
-    plt.show()
-
-
-### Problem parameters
-
 EPS = 1e-12
 
-# Write solutions every number of iterations
-SOLUTION_WRITING_PERIOD = 25
-
-# Residual material integrity when phasefield value is `1`
-MINIMUM_MATERIAL_INTEGRITY = Constant(1e-5)
-
-# Exponent in the material degradation law
-MATERIAL_DEGRADATION_EXPONENT = 2
-
-# When meshing the domain using `dolfin.UnitSquareMesh`
-MESH_PATTERN = "left/right"
-# MESH_PATTERN = "crossed"
-# MESH_PATTERN = "left"
-
-PLOT_RESULTS = False
-SAVE_FIGURES = True
 
 ### Results output
 
@@ -75,144 +53,57 @@ SAFE_TO_REMOVE_FILE_TYPES = \
     ('.out', '.npy', '.pvd', '.vtu', '.png', '.svg', '.eps', '.pdf')
 
 
+### Problem definition
+
 def phasefield_regularization(p):
     '''Penalty for large phasefield gradients.'''
-    return 0.5*dot(grad(p), grad(p))
+    return dolfin.grad(p)**2
 
 
-def material_integrity_law(p):
+def material_integrity_model(p):
+    '''Material integrity given the value of phasefield.
 
-    m_inf = MINIMUM_MATERIAL_INTEGRITY
-    b = MATERIAL_DEGRADATION_EXPONENT
+    Notes
+    -----
+    The returned value should be in range [rho_min, 1].
 
-    return m_inf + (1.0-m_inf) * ((1.0+EPS)-p) ** b
+    '''
 
+    # Minimum (residual) material integrity
+    rho_min = Constant(1e-5)
 
-def unit_square_mesh(number_of_cells_along_edge, mesh_pattern):
+    # Material degradation exponent (`>1`)
+    beta = 2
 
-    nx = ny = number_of_cells_along_edge
-    mesh = UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
-
-    # mesh.translate(Point(-0.5,-0.5))
-    # mesh.scale(GEOMETRIC_SCALING)
-
-    return mesh
-
-
-def displacement_boundary_conditions(V, load_type):
-    '''Displacement boundary conditions concerning a rectangular 2D domain.'''
-
-    mesh = V.mesh()
-
-    x = mesh.coordinates()
-
-    x_min = x.min(axis=0)
-    x_max = x.max(axis=0)
-
-    x0, y0 = x_min
-    x1, y1 = x_max
-
-    L = x1-x0
-    H = y1-y0
-
-    rtol = EPS
-    atol = rtol*min(L,H)
-
-    ### Boundary subdomains
-
-    def boundary_bot(x, on_boundary):
-        return on_boundary and x[1] < y0+atol
-
-    def boundary_top(x, on_boundary):
-        return on_boundary and x[1] > y1-atol
-
-    def boundary_lhs(x, on_boundary):
-        return on_boundary and x[0] < x0+atol
-
-    def boundary_rhs(x, on_boundary):
-        return on_boundary and x[0] > x1-atol
-
-    ### Boundary conditions
-
-    uyD_top = Expression(' s', s=0.0, degree=0)
-    uyD_bot = Expression('-s', s=0.0, degree=0)
-    # uxD_lbc = Expression('-s', s=0.0, degree=0)
-    # uyD_lbc = Expression('-s', s=0.0, degree=0)
-
-    if load_type == 'biaxial':
-
-        uxD_lhs = Expression('-s', s=0.0, degree=0)
-        uxD_rhs = Expression(' s', s=0.0, degree=0)
-
-        bcs = [
-            DirichletBC(V.sub(0), uxD_lhs, boundary_lhs),
-            DirichletBC(V.sub(0), uxD_rhs, boundary_rhs),
-            DirichletBC(V.sub(1), uyD_top, boundary_top),
-            DirichletBC(V.sub(1), uyD_bot, boundary_bot),
-            ]
-
-        def set_boundary_displacement_values(s):
-            uxD_lhs.s = s
-            uxD_rhs.s = s
-            uyD_top.s = s
-            uyD_bot.s = s
-
-    elif load_type == 'uniaxial':
-
-        bcs = [
-            DirichletBC(V.sub(1), uyD_top, boundary_top),
-            DirichletBC(V.sub(1), uyD_bot, boundary_bot),
-            DirichletBC(V.sub(0), Constant(0.0), boundary_top),
-            DirichletBC(V.sub(0), Constant(0.0), boundary_bot),
-            ]
-
-        def set_boundary_displacement_values(s):
-            uyD_top.s = s
-            uyD_bot.s = s
-
-    else:
-        raise ValueError('Parameter `load_type`?')
-
-    return bcs, set_boundary_displacement_values
-
-
-def simulate(optimizer, target_phasefield_means, stepsize,
-             tolerance, smoothing_weight, minimum_distance,
-             stepsize_final=None, tolerance_final=None):
-
-    if stepsize_final is None:
-        stepsize_final = stepsize
-
-    if tolerance_final is None:
-        tolerance_final = tolerance
-
-    potential_vs_iteration = []
-    potential_vs_phasefield = []
-
-    for p_mean_i in target_phasefield_means:
-        logger.info(f'Solving for p_mean: {p_mean_i:4.3}')
-
-        p_mean.assign(p_mean_i)
-
-        n, b, potentials = optimizer.optimize(stepsize,
-            smoothing_weight, minimum_distance, tolerance)
-
-        potential_vs_iteration.extend(potentials)
-        potential_vs_phasefield.append(potentials[-1])
-
-    else:
-        logger.info(f'Solving for p_mean: {p_mean_i:4.3} [final]')
-
-        n, b, potentials = optimizer.optimize(stepsize_final,
-            smoothing_weight, minimum_distance, tolerance_final)
-
-        potential_vs_iteration.extend(potentials)
-        potential_vs_phasefield[-1] = potentials[-1]
-
-    return potential_vs_iteration, potential_vs_phasefield
+    return rho_min + (1.0-rho_min) * ((1.0+EPS)-p) ** beta
 
 
 if __name__ == "__main__":
+
+    ### Problem parameters
+
+    load_type = 'biaxial'
+    # load_type = 'uniaxial'
+
+    boundary_displacement_value = 0.01
+
+    material_model_name = "LinearElasticModel"
+    # material_model_name = "NeoHookeanModel"
+
+    defect_nucleation_pattern = "uniform_wout_margin"
+    # defect_nucleation_pattern = "uniform_with_margin"
+
+    numbers_of_defects_per_dimension = [6,]
+
+    phasefield_volume_fraction_stepsize = 0.1
+    phasefield_volume_fraction_maximum = 1.0
+
+    save_results = True
+    plot_results = True
+
+    # Write solutions every number of solver iterations
+    function_writing_period = 25
+
 
     ### Discretization parameters
 
@@ -222,60 +113,66 @@ if __name__ == "__main__":
     # Phasefield function degree
     phasefield_degree = 1
 
-    # number_of_cells_along_edge = 61
-    # number_of_cells_along_edge = 81
-    number_of_cells_along_edge = 161
-    # number_of_cells_along_edge = 321
+    # mesh_pattern = "left/right"
+    mesh_pattern = "crossed"
+    # mesh_pattern = "left"
+
+    # number_of_cells_along_edge = 41
+    # number_of_cells_along_edge = 60
+    # number_of_cells_along_edge = 80
+    # number_of_cells_along_edge = 100
+    number_of_cells_along_edge = 160
+    # number_of_cells_along_edge = 320
 
 
     ### Solver parameters
 
-    # Upperbound on phasefield nodal change per iteration
-    stepsize = 0.01
+    # Maximum phasefield increment size (L_inf-norm)
+    phasefield_stepsize = 0.01
 
-    # Phasefield convergence tolerance (L1-norm)
-    tolerance = 1e-3
-
-    # Concerns the final optimization attempt
-    stepsize_final = stepsize * 0.1
-    tolerance_final = tolerance * 0.1
-
-    # Phasefield smoothing weight
-    smoothing_weight = 0.425
-    # smoothing_weight = 0.450
-    # smoothing_weight = 0.475
-    # smoothing_weight = 0.500
+    # Phasefield convergence tolerance (L_1-norm)
+    convergence_tolerance = 1e-3
 
     # Minimum distance between local phasefields
-    minimum_distance = 0.05
+    collision_distance = 4 / number_of_cells_along_edge
+    # collision_distance_hard = collision_distance  * 0
+    # NOTE: Generally, should not be mesh dependent,
+    # but we would like as close proximity as possible.
 
-    initial_defect_radius = 3e-2 + 1e-4
+    defect_nucleation_radius = 3 / number_of_cells_along_edge
+    # NOTE: Generally, should not be mesh dependent.
 
-
-    ### Study parameters
-
-    load_type = 'biaxial'
-    # load_type = 'uniaxial'
-
-    material_model_name = "LinearElasticModel"
-    # material_model_name = "NeoHookeanModel"
-
-    initial_defect_pattern = "uniform"
-    # initial_defect_pattern = "checker"
-
-    numbers_of_defects_per_dimension = [3,4,5] # ,6,7,8
-
-    maximum_boundary_displacements = np.linspace(0.01, 0.02, 2)
-
-    target_phasefield_means = np.linspace(0.100, 0.125, 2)
-
-    initial_phasefield_mean = target_phasefield_means[0]
-    final_phasefield_mean = target_phasefield_means[-1]
+    # Phasefield penalty (regularization) weight
+    # penalty_weight = 0.350
+    # penalty_weight = 0.400
+    penalty_weight = 0.425
+    # penalty_weight = 0.450
+    # penalty_weight = 0.475
 
 
     ### Discretization
 
-    mesh = unit_square_mesh(number_of_cells_along_edge, MESH_PATTERN)
+    if number_of_cells_along_edge % 2:
+        if not all(n_i % 2 for n_i in numbers_of_defects_per_dimension):
+            logger.warning('For an ODD number of elements, the number of '
+                           'defects should be ODD. This improves the '
+                           'stability of the phasefield evolution.')
+    else:
+        if any(n_i % 2 for n_i in numbers_of_defects_per_dimension):
+            logger.warning('For an EVEN number of elements, the number of '
+                           'defects should be EVEN. This improves the '
+                           'stability of the phasefield evolution.')
+
+    mesh = utility.unit_square_mesh(number_of_cells_along_edge, mesh_pattern)
+
+
+    ### Integration measure
+
+    dx = dolfin.dx(domain=mesh)
+    ds = dolfin.ds(domain=mesh)
+
+
+    ### Function spaces
 
     V_u = VectorFunctionSpace(mesh, 'CG', displacement_degree)
     V_p = FunctionSpace(mesh, 'CG', phasefield_degree)
@@ -283,216 +180,259 @@ if __name__ == "__main__":
     u = Function(V_u, name="displacement")
     p = Function(V_p, name="phasefield")
 
-    phasefield_smoother = optim.DiffusionFilter(V_p, kappa=1e-4)
 
+    ### Dirichlet boundary conditions
 
-    ### Boundary conditions
+    if load_type == "biaxial":
+        bcs, bcs_set_value = utility.uniform_biaxial_extension_bcs(V_u)
+    elif load_type == "uniaxial":
+        bcs, bcs_set_value = utility.uniform_uniaxial_extension_bcs(V_u)
+    else:
+        raise ValueError('`load_type`?')
 
-    bcs, set_boundary_displacement_values = \
-        displacement_boundary_conditions(V_u, load_type)
+    bcs_set_value(boundary_displacement_value)
 
 
     ### Material model
 
-
     if material_model_name == "LinearElasticModel":
 
-        material_parameters = {'E': Constant(1.0), 'nu': Constant(0.3)}
+        material_parameters = {'E': Constant(1.0), 'nu': Constant(0.4)}
         material_model = material.LinearElasticModel(material_parameters, u)
 
     elif material_model_name == "NeoHookeanModel":
 
-        material_parameters = {'E': Constant(1.0), 'nu': Constant(0.3)}
+        material_parameters = {'E': Constant(1.0), 'nu': Constant(0.4)}
         material_model = material.NeoHookeanModel(material_parameters, u)
 
     else:
-        raise ValueErrpr('Parameter `material_model_name`?')
+        raise ValueError('Parameter `material_model_name`?')
 
     psi = material_model.strain_energy_density()
     pk1 = material_model.stress_measure_pk1()
     pk2 = material_model.stress_measure_pk2()
 
-    m = material_integrity_law(p)
-    phi = phasefield_regularization(p)
+    rho = material_integrity_model(p)
 
-    # Potential/strain energy
-    W = m * psi * dx
+    # Potential energy (only strain energy)
+    W = rho * psi * dx
+
+    # Variational form
+    F = dolfin.derivative(W, u)
 
 
     ### Phasefield constraints
 
-    # Penalty-like phasefield regularization
+    phi = phasefield_regularization(p)
+
+    # Phasefield penalty (for regularizatio)
     P = phi * dx
 
     # Target mean phasefield
     p_mean = Constant(0.0)
 
-    # Phasefield fraction constraint(s)
+    # Phasefield fraction constraint
     C = (p - p_mean) * dx
 
 
-    ### Compute defect/phasefield nucleation sites
+    ### Generate phasefield nucleation coordinates
+
+    list_of_defect_coordinates = []
+
+    if defect_nucleation_pattern == "uniform_wout_margin":
+        meshgrid = optim.helper.meshgrid_uniform
+    elif defect_nucleation_pattern == "uniform_with_margin":
+        meshgrid = optim.helper.meshgrid_uniform_with_margin
+    elif defect_nucleation_pattern == "checker":
+        meshgrid = optim.helper.meshgrid_checker
+    else:
+        raise ValueError('`defect_nucleation_pattern`?')
 
     x0, y0 = mesh.coordinates().min(axis=0)
     x1, y1 = mesh.coordinates().max(axis=0)
 
-    defect_xlim = (x0, x1)
-    defect_ylim = (y0, y1)
-
-    list_of_defect_coordinates = []
-
-    if initial_defect_pattern == "uniform":
-        meshgrid_function = utility.meshgrid_uniform
-    elif initial_defect_pattern == "checker":
-        meshgrid_function = utility.meshgrid_checker
-    else:
-        raise ValueError
-
     for n_i in numbers_of_defects_per_dimension:
-        list_of_defect_coordinates.append(meshgrid_function(
-            defect_xlim, defect_ylim, n_i, n_i))
 
-
-    ### Solve the undamaged problem
-
-    # NOTE: The displacement solution will be used for reinitialization.
-    # NOTE: The undamged potential energy will be used for normalization.
-
-    assert p.vector().get_local().any() == False
-
-    set_boundary_displacement_values(maximum_boundary_displacements[0])
-    optimizer_dummy = optim.TopologyOptimizer(W, P, C, p, p, u, bcs)
-
-    optimizer_dummy.solve_equilibrium_problem()
-    undamaged_displacement_vector = u.vector().get_local()
-    undamaged_potential_energy = assemble(W)
+        list_of_defect_coordinates.append(
+            meshgrid((x0, x1), (y0, y1), n_i, n_i)
+            # meshgrid([-0.5,0.5], [0.0,0.0], n_i, 1)
+            )
 
 
     ### Main loop for parametric study
 
-    load_type_i = load_type
-    material_model_name_i = material_model_name
-    boundary_displacement_i = maximum_boundary_displacements[0]
+    # NOTE: The displacement solution will be used for reinitialization.
+    # NOTE: The undamged potential energy will serve as a reference.
+
+    assert p.vector().get_local().any() == False
+
+    # Solve hyperelastic problem without any damage
+    dolfin.solve(F==0, u, bcs)
+
+    undamaged_solution_vector = u.vector().get_local()
+    undamaged_potential_energy = dolfin.assemble(W)
 
     for defect_coordinates_i in list_of_defect_coordinates:
 
-        defect_count_i = len(defect_coordinates_i)
+        problem_start_time = time.time()
+
+        problem_title = (
+            f"load({load_type})-"
+            f"periodicBC({False})-"
+            f"displacement({boundary_displacement_value})-"
+            f"defectPattern({defect_nucleation_pattern})-"
+            f"defectCount({len(defect_coordinates_i)})-"
+            f"penaltyWeight({penalty_weight})-"
+            f"material({material_model_name})-"
+            f"mesh({mesh.num_vertices()})-"
+            f"date({time.strftime('%m%d')})-"
+            f"hour({time.strftime('%H')})"
+            )
+
+        logger.info("BEGIN PROBLEM:\n\n\t"
+            + problem_title.replace('-','\n\t')+"\n")
+
 
         ### Results output
 
-        iteration_name_i = (
-            f"load({load_type_i})-"
-            f"material({material_model_name_i})-"
-            f"displacement({boundary_displacement_i})-"
-            f"defectPattern({initial_defect_pattern})-"
-            f"defectCount({defect_count_i})"
-            )
+        if save_results:
 
-        results_outdir_arrays = os.path.join(
-            RESULTS_OUTDIR_PARENT, iteration_name_i, "arrays")
+            results_outdir_arrays = os.path.join(
+                RESULTS_OUTDIR_PARENT, problem_title, "arrays")
 
-        results_outdir_figures = os.path.join(
-            RESULTS_OUTDIR_PARENT, iteration_name_i, "figures")
+            results_outdir_figures = os.path.join(
+                RESULTS_OUTDIR_PARENT, problem_title, "figures")
 
-        results_outdir_functions = os.path.join(
-            RESULTS_OUTDIR_PARENT, iteration_name_i, "functions")
+            results_outdir_functions = os.path.join(
+                RESULTS_OUTDIR_PARENT, problem_title, "functions")
 
-        if not os.path.isdir(results_outdir_arrays):
-            os.makedirs(results_outdir_arrays)
+            if not os.path.isdir(results_outdir_arrays):
+                os.makedirs(results_outdir_arrays)
 
-        if not os.path.isdir(results_outdir_figures):
-            os.makedirs(results_outdir_figures)
+            if not os.path.isdir(results_outdir_figures):
+                os.makedirs(results_outdir_figures)
 
-        if not os.path.isdir(results_outdir_functions):
-            os.makedirs(results_outdir_functions)
+            if not os.path.isdir(results_outdir_functions):
+                os.makedirs(results_outdir_functions)
 
-        utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
-        utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
-        utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
+            utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
+            utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
+            utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
 
-        solution_writer = utility.SolutionWriter(
-            results_outdir_functions, u, p,
-            period=SOLUTION_WRITING_PERIOD)
+            solution_writer = utility.SolutionWriter(
+                results_outdir_functions, u, p, writing_period=function_writing_period)
+
+        else:
+            solution_writer = type("DummySolutionWriter", (),
+                dict(write=lambda:None, periodic_write=lambda:None))
 
 
         ### Initialize local phasefields
 
-        p_locals = [dolfin.Function(V_p)
-            for _ in range(len(defect_coordinates_i))]
+        defect_nucleation_radius += mesh.hmax() * 1e-4
 
-        for p_i, x_i in zip(p_locals, defect_coordinates_i):
-            utility.insert_defect(p_i, x_i, initial_defect_radius)
+        p_locals = optim.helper.make_defect_like_phasefield_array(
+            V_p, defect_coordinates_i, defect_nucleation_radius, kappa=1e-4)
 
-
-        ### Smooth the initial (sharp) phasefields
-
-        for p_i in p_locals:
-            phasefield_smoother.apply(p_i)
-            # p_arr_i = p_i.vector().get_local()
-            # p_arr_i[p_arr_i < 0.0] = 0.0
-            # p_arr_i[p_arr_i > 1.0] = 1.0
-            # p_i.vector()[:] = p_arr_i
+        phasefield_volume_fraction_initial = \
+            assemble(sum(p_locals)*dx) / assemble(1*dx)
 
 
         ### Optimization problem
 
-        optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, u, bcs,
-            external_function=solution_writer.periodic_write)
+        optimizer = optim.TopologyOptimizer(F, W, P, C, p, p_locals, u,
+            bcs, external_callable=solution_writer.periodic_write)
 
         # Reinitialize the undamged displacement solution
-        u.vector()[:] = undamaged_displacement_vector
+        u.vector()[:] = undamaged_solution_vector
 
 
-        ### Solve optimization problem
+        ### Solve case
 
-        t0 = time.time()
+        potentials_vs_iterations = []
+        potentials_vs_phasefield = []
+        phasefield_volume_fractions = []
 
-        potential_vs_iteration, potential_vs_phasefield = simulate(optimizer,
-            target_phasefield_means, stepsize, tolerance, smoothing_weight,
-            minimum_distance, stepsize_final, tolerance_final)
+        solver_iteration_failed = False
+        minimum_iters_for_early_stop = 3
 
-        print(f'\n *** CPU TIME: {time.time()-t0}\n')
+        phasefield_volume_fraction_i = phasefield_volume_fraction_initial
+        while phasefield_volume_fraction_i < phasefield_volume_fraction_maximum:
+
+            phasefield_volume_fraction_i += \
+                phasefield_volume_fraction_stepsize
+
+            phasefield_volume_fractions.append(
+                phasefield_volume_fraction_i)
+
+            p_mean.assign(phasefield_volume_fraction_i)
+
+            try:
+
+                logger.info('Solving for phasefield volume fraction '
+                            f'{phasefield_volume_fraction_i:.3f}')
+
+                iterations_i, converged_i, potentials_vs_iterations_i = \
+                    optimizer.optimize(phasefield_stepsize, penalty_weight,
+                        collision_distance, convergence_tolerance)
+
+            except RuntimeError:
+
+                logger.error('Solver failed for volume fraction '
+                             f'{phasefield_volume_fraction_i:.3f}')
+
+                phasefield_volume_fractions.pop()
+                solver_iteration_failed = True
+                break
+
+            potentials_vs_iterations.extend(potentials_vs_iterations_i)
+            potentials_vs_phasefield.append(potentials_vs_iterations_i[-1])
+
+            if potentials_vs_iterations_i[0] < potentials_vs_iterations_i[-1]:
+                break
+
+            if iterations_i <= minimum_iters_for_early_stop:
+                logger.info('Early stop triggered [STOP]')
+                break
 
 
         ### Save results
 
-        potential_vs_iteration = [W_i / undamaged_potential_energy
-                                  for W_i in potential_vs_iteration]
+        potentials_vs_iterations = [W_i / undamaged_potential_energy
+                                    for W_i in potentials_vs_iterations]
 
-        potential_vs_phasefield = [W_i / undamaged_potential_energy
-                                   for W_i in potential_vs_phasefield]
+        potentials_vs_phasefield = [W_i / undamaged_potential_energy
+                                    for W_i in potentials_vs_phasefield]
 
-        np.savetxt(os.path.join(results_outdir_arrays,
-            "potential_vs_iteration.out"),
-            potential_vs_iteration)
+        if save_results:
 
-        np.savetxt(os.path.join(results_outdir_arrays,
-            "potential_vs_phasefield.out"),
-            potential_vs_phasefield)
+            np.savetxt(os.path.join(results_outdir_arrays,
+                "potentials_vs_iterations.out"), potentials_vs_iterations)
 
-        np.savetxt(os.path.join(results_outdir_arrays,
-            "target_phasefield_means.out"),
-            target_phasefield_means)
+            np.savetxt(os.path.join(results_outdir_arrays,
+                "potentials_vs_phasefield.out"), potentials_vs_phasefield)
 
-        solution_writer.write(forcewrite_all=True)
+            np.savetxt(os.path.join(results_outdir_arrays,
+                "phasefield_volume_fractions.out"), phasefield_volume_fractions)
 
+            solution_writer.write(forcewrite_all=True)
 
-        if SAVE_FIGURES:
+        if save_results or plot_results:
 
             figure_handles = []
 
             figure_handles.append(
                 utility.plot_energy_vs_iterations(
-                    potential_vs_iteration))
+                    potentials_vs_iterations))
 
             figure_handles.append(
                 utility.plot_energy_vs_phasefields(
-                    potential_vs_phasefield, target_phasefield_means))
+                    potentials_vs_phasefield, phasefield_volume_fractions))
 
             figure_handles.append(
                 utility.plot_phasefiled(p))
 
-            if SAVE_FIGURES:
+            if save_results:
 
                 fig_handles = [f[0] for f in figure_handles]
                 fig_names = [f[1] for f in figure_handles]
@@ -504,6 +444,21 @@ if __name__ == "__main__":
                     handle_i.savefig(name_i+'.svg')
                     handle_i.savefig(name_i+'.pdf')
 
-            if not PLOT_RESULTS:
+            if not plot_results:
                 plt.close('all')
 
+
+        ### Finish
+
+        logger.info("END PROBLEM:\n\n\t"
+            + problem_title.replace('-','\n\t')+"\n")
+
+        problem_finish_time = time.time()
+        problem_elapsed_time = problem_finish_time - problem_start_time # (sec)
+
+        # problem_elapsed_time_readable = {
+        #     "Days": (problem_elapsed_time / 3600) // 24,
+        #     "Hours": (problem_elapsed_time / 3600) % (24 * 3600)) * 24 // 3600,
+        #     "Minuts": (problem_elapsed_time % (24 * 3600)) * 24 // 3600,}
+
+        logger.info(f'Elapsed time (s): {problem_elapsed_time:g}')
