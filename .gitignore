@@ -6,15 +6,17 @@
 *.pvd
 *.vtu
 
+notes.py
+notes.txt
+
 __pycache__
 
 **/temp*
 **/test*
 
-img*
-out*
-
+**/archive
 **/outputs
 **/results
+**/results_old
 
 !.gitignore

@@ -1,4 +1,5 @@
-'''Topology optimization based on phase-fields. (biomech-optimtop)
+'''Optimize material distribution for maximum compliance (minimum stiffness) of
+a hyper-elastic solid.
 
 By Danas Sutula
 University of Liberec, Czech Republic, 2018-2019
@@ -26,39 +27,50 @@ SEQUENCE_TYPES = (tuple, list)
 
 
 class TopologyOptimizer:
-    '''Minimize a cost functional.'''
-
-    def __init__(self, F, W, P, C, p, p_locals, u, bcs_u, external_callable=None):
-        '''
+    def __init__(self, W, R, F, C, u, p, p_locals, bcs_u,
+                 function_to_call_during_iterations=None):
+        '''Minimize the objective functional (e.g. potential energy of a hyper-
+        elastic solid) `W(u(p),p)` with respect to the phasefield `p` subject to
+        the satisfaction of the weak-form (e.g. static equilibrium functional)
+        `F(u(p),p)` and phasefield equality-constraint functionals `C(p)`.
 
         Parameters
         ----------
         W : dolfin.Form
-            Either potential or strain energy to be minimized.
-        P : dolfin.Form
-            Functional that is a measure of the roughness of the phasefield.
-            Note, this functional acts like penaly; that is, it modifies the
-            phasefield increment vector so as to make the solution more smooth.
+            The potential energy functional to be minimized with respect to the
+            phasefield `p`.
+        R : dolfin.Form
+            Penalty-like phasefield regularization functional that solely depends
+            on the phasefield `p`. The functional `R` should be a measure of the
+            roughness of the phasefield `p`. The phasefield advance direction will
+            then be determined as the weighted average direction of the potential
+            energy gradient direction and the phasefield regularization gradient
+            direction.
+        F : dolfin.Form
+            Variational problem (F==0).
         C : (sequence of) dolfin.Form(s)
-            Phasefield equality-constraint functionals. Note, each constraint
-            functional must be linear in `p` and independent of `u`.
+            Phasefield equality-constraint functionals that solely depend on the
+            phasefield `p` and that are linear in `p`.
         p : dolfin.Function
             Global phasefield function.
         p_locals : (sequence of) dolfin.Function(s)
             Local phasefield functions. Note, the sum of the local phasefield
-            functions will be automatically assigned to the global phasefield.
+            functions will be equivelent to the global phasefield function `p`.
         u : dolfin.Function
-            Displacement/mixed field.
-        bcs_u : (sequence of) dolfin.DirichletBC(s)
-            Displacement/mixed field boundary conditions.
-        external_callable : callable
-            Function to be called at each iteration of the solver. The function
-            will typically be responsible for recording the solution variables.
+            Displacement or mixed field function.
+        bcs_u : (sequence of) dolfin.DirichletBC's
+            Displacement or mixed field Dirichlet boundary conditions.
+        function_to_call_during_iterations : function(self)
+            Function to be called at each iteration of the solver. The `self`
+            object will be passed to the function as the argument. This function
+            will typically be responsible for recording the solution state.
 
         '''
 
-        if external_callable is not None and not callable(external_callable):
-            raise TypeError('Parameter `external_callable` must be callable.')
+        if function_to_call_during_iterations is not None \
+           and not callable(function_to_call_during_iterations):
+            raise TypeError('Parameter `function_to_call_during_iterations` must '
+                            'be callable with the `self` object as the argument.')
 
         alpha = config.parameters_distance_solver['alpha']
         kappa = config.parameters_distance_solver['kappa']
@@ -99,10 +111,10 @@ class TopologyOptimizer:
         self._initialize_local_phasefields(p_locals)
 
         self._W = W
-        self._P = P
+        self._R = R
 
         self._dWdp = derivative(W, p)
-        self._dPdp = derivative(P, p)
+        self._dRdp = derivative(R, p)
         self._dFdu = derivative(F, u)
 
         if isinstance(C, SEQUENCE_TYPES):
@@ -127,8 +139,8 @@ class TopologyOptimizer:
         self.parameters_topology_solver = \
             config.parameters_topology_solver.copy()
 
-        self.external_callable = external_callable \
-            if external_callable is not None else lambda : None
+        self.function_to_call_during_iterations = function_to_call_during_iterations \
+            if function_to_call_during_iterations is not None else lambda self : None
 
 
     def solve_equilibrium_problem(self):
@@ -168,7 +180,7 @@ class TopologyOptimizer:
             self._apply_collision_prevention = lambda p_arr : None
 
 
-    def optimize(self, stepsize, penalty_weight, collision_distance,
+    def optimize(self, stepsize, regularization_weight, collision_distance,
                  convergence_tolerance=None, minimum_convergences=None,
                  maximum_divergences=None, maximum_iterations=None):
         '''
@@ -177,9 +189,10 @@ class TopologyOptimizer:
         stepsize : float
             Phasefield stepsize. More precisely, it is the maximum nodal change
             in the phasefield per iteration, i.e. the l_inf norm of the change.
-        penalty_weight : float
-            Factor weighting the amount of phasefield regularity (`P`) relative
-            to the amount of phasefield strain energy (`W`) dissipationt.
+        regularization_weight : float
+            The phasefield advance direction will be the weighted-average of the
+            phasefield regularization `R` gradient direction and the potential
+            energy `W` gradient direction with respect to the phasefield `p`.
         collision_distance : float
             Minimum distance between local phasefields including blending branch.
 
@@ -198,8 +211,8 @@ class TopologyOptimizer:
         if collision_distance < 0.0:
             raise ValueError('Require `collision_distance > 0`')
 
-        if not 0.0 <= penalty_weight <= 1.0:
-            raise ValueError('Require `0 <= penalty_weight <= 1`.')
+        if not 0.0 <= regularization_weight <= 1.0:
+            raise ValueError('Require `0 <= regularization_weight <= 1`.')
 
         parameters = self.parameters_topology_solver
 
@@ -240,8 +253,8 @@ class TopologyOptimizer:
         self._assign_phasefield_values(p_arr)
         self._solve_phasefield_distances()
 
-        weight_P = penalty_weight
-        weight_W = 1.0 - weight_P
+        weight_R = regularization_weight
+        weight_W = 1.0 - weight_R
 
         convergences_count = -1
         divergences_count = 0
@@ -273,15 +286,16 @@ class TopologyOptimizer:
             W_cur = assemble(self._W)
             potentials.append(W_cur)
 
-            normL1_p = p_arr_prv.sum()
-            normL1_dp = np.abs(p_arr-p_arr_prv).sum()
-            change_p = normL1_dp / normL1_p
+            dp_arr = p_arr - p_arr_prv
+            norm_dp = np.abs(dp_arr).max()
 
-            logger.info(f'k:{iterations_count:3d}, '
-                        f'potential:{W_cur: 11.5e}, '
-                        f'|dp|/|p|:{change_p: 8.2e}')
+            logger.info(
+                f'k:{iterations_count:3d}, '
+                f'W:{W_cur: 11.5e}, '
+                f'|dp|_inf:{norm_dp: 8.2e}'
+                )
 
-            self.external_callable()
+            self.function_to_call_during_iterations(self)
 
             ### Assess convergence
 
@@ -295,7 +309,7 @@ class TopologyOptimizer:
                     is_converged = False
                     break
 
-            if change_p > convergence_tolerance:
+            if norm_dp > convergence_tolerance:
                 convergences_count = 0
             else:
                 convergences_count += 1
@@ -305,27 +319,27 @@ class TopologyOptimizer:
                     break
 
             if iterations_count >= maximum_iterations:
-                logger.error('Reached maximum number of iterations [BREAK]')
+                logger.warning('Reached maximum number of iterations [BREAK]')
                 is_converged = False
                 break
 
             ### Estimate phasefield change
 
             x_W = assemble(self._dWdp).get_local()
-            x_P = assemble(self._dPdp).get_local()
+            x_R = assemble(self._dRdp).get_local()
 
             # Orthogonalize with respect to (orthogonal) constraints
             for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
                 x_W -= dp_C_i * (x_W.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
-                x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                x_R -= dp_C_i * (x_R.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
 
             # Weighted-average phasefield advance direction
             dp_arr = x_W * (-weight_W/math.sqrt(x_W.dot(x_W))) \
-                   + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
+                   + x_R * (-weight_R/math.sqrt(x_R.dot(x_R)))
 
             # NOTE: Results using L_inf-norm are inferior to L_2-norm
             # dp_arr = x_W * (-weight_W/max(-x_W.min(), x_W.max())) \
-            #        + x_P * (-weight_P/max(-x_P.min(), x_P.max()))
+            #        + x_R * (-weight_R/max(-x_R.min(), x_R.max()))
 
             # Enforce phasefield lower and upper bounds
             dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0

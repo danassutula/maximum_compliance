@@ -10,33 +10,34 @@ from dolfin import assemble
 from dolfin import dx
 
 
-WRITE_PVD_DISPLACEMENTS = False
-WRITE_NPY_DISPLACEMENTS = False
-
-WRITE_PVD_PHASEFIELDS = True
-WRITE_NPY_PHASEFIELDS = False
-
 EPS = 1e-12
 
 
-class SolutionWriter:
+def make_parameter_combinations_for_zipping(*parameters):
+    '''Return all combinations of `parameters`. (To be used in `zip`.)'''
+    return [x.reshape(-1).tolist() for x in np.meshgrid(*parameters)]
 
-    SAFE_TO_REMOVE_FILE_TYPES = ('.pvd', '.vtu', '.npy')
 
-    def __init__(self, outdir, u, p, writing_period=1):
+class PeriodicSolutionWriter:
+
+    def __init__(self, outdir, u, p, writing_period=1,
+        write_phasefield_pvd=True, write_displacements_pvd=False,
+        write_phasefield_npy=False, write_displacements_npy=False):
 
         if not isinstance(u, Function):
-            raise TypeError
+            raise TypeError('Parameter `u` must be a `dolfin.Function`.')
 
         if not isinstance(p, Function):
-            raise TypeError
+            raise TypeError('Parameter `p` must be a `dolfin.Function`.')
 
         if not os.path.exists(outdir):
             os.makedirs(outdir)
 
-        # Remove any existing files in the subdirectory `outdir` provided they
-        # have extensions that are in the sequence `self.SAFE_TO_REMOVE_FILE_TYPES`.
-        remove_outfiles(outdir, self.SAFE_TO_REMOVE_FILE_TYPES)
+        self.write_phasefield_pvd = write_phasefield_pvd
+        self.write_phasefield_npy = write_phasefield_npy
+
+        self.write_displacements_pvd = write_displacements_pvd
+        self.write_displacements_npy = write_displacements_npy
 
         self.u = u
         self.p = p
@@ -60,37 +61,37 @@ class SolutionWriter:
         prefix, extension = os.path.splitext(os.path.join(outdir, 'dofs_p.npy'))
         self.outfilepath_p_dofs_format = (prefix + '{:04d}' + extension).format
 
-    def periodic_write(self):
+    def periodic_write(self, calling_object=None):
 
         if self.count_calls % self.writing_period:
             self.count_calls += 1; return
 
-        self.write()
+        self.write(calling_object)
 
-    def write(self,
-              forcewrite_displacements=False,
+    def write(self, calling_object=None,
               forcewrite_phasefields=False,
+              forcewrite_displacements=False,
               forcewrite_all=False):
 
-        forcewrite_displacements |= forcewrite_all
         forcewrite_phasefields |= forcewrite_all
+        forcewrite_displacements |= forcewrite_all
 
         self.mean_phasefield_values.append(
             assemble(self._ufl_form_p_mean))
 
-        if WRITE_PVD_DISPLACEMENTS or forcewrite_displacements:
-            self.outfile_u << self.u
-
-        if WRITE_PVD_PHASEFIELDS or forcewrite_phasefields:
+        if self.write_phasefield_pvd or forcewrite_phasefields:
             self.outfile_p << self.p
 
-        if WRITE_NPY_DISPLACEMENTS or forcewrite_displacements:
-            np.save(self.outfilepath_u_dofs_format(self.index_write),
-                    self.u.vector().get_local())
+        if self.write_displacements_pvd or forcewrite_displacements:
+            self.outfile_u << self.u
 
-        if WRITE_NPY_PHASEFIELDS or forcewrite_phasefields:
+        if self.write_phasefield_npy or forcewrite_phasefields:
             np.save(self.outfilepath_p_dofs_format(self.index_write),
                     self.p.vector().get_local())
+
+        if self.write_displacements_npy or forcewrite_displacements:
+            np.save(self.outfilepath_u_dofs_format(self.index_write),
+                    self.u.vector().get_local())
 
         self.count_calls += 1
         self.index_write += 1
@@ -128,7 +129,7 @@ def remove_outfiles(subdir, file_extensions):
 
 def unit_square_mesh(number_of_cells_along_edge,
                      mesh_pattern="left/right",
-                     offset=(-0.5,-0.5), scale=1):
+                     offset=(0.0,0.0), scale=1):
     '''
     Parameters
     ----------
@@ -172,7 +173,7 @@ class PeriodicBoundaries(dolfin.SubDomain):
     Right boundary is slave boundary wrt left (master) boundary.'''
 
     def __init__(self, mesh):
-        super().__init__() # !!!
+        super().__init__() # Important!
 
         x0, y0 = mesh.coordinates().min(0)
         x1, y1 = mesh.coordinates().max(0)
@@ -282,21 +283,20 @@ def uniform_uniaxial_extension_bcs(V):
     return bcs, bcs_set_value
 
 
-def plot_energy_vs_iterations(potential_vs_iteration,
+def plot_energy_vs_iterations(energy_vs_iteration,
                               figname="energy_vs_iterations",
-                              ylabel='Energy'):
+                              ylabel='Energy', semilogy=False):
 
     fh = plt.figure(figname)
     fh.clear(); ah=fh.subplots()
 
-    ah.plot(potential_vs_iteration, '-k')
+    if semilogy:
+        ah.semilogy(energy_vs_iteration, '-')
+    else:
+        ah.plot(energy_vs_iteration, '-')
 
     ah.set_ylabel(ylabel)
     ah.set_xlabel('Iteration number')
-
-    # axis_limits = ah.axis()
-    # axis_limits[-2] = 0.0 # Set y0 at zero
-    # ah.axis()
 
     fh.tight_layout()
     fh.show()
@@ -304,15 +304,18 @@ def plot_energy_vs_iterations(potential_vs_iteration,
     return fh, figname
 
 
-def plot_energy_vs_phasefields(potential_vs_phasefield,
-                               mean_phasefield_values,
+def plot_energy_vs_phasefields(energy_vs_phasefield,
+                               phasefield_fractions,
                                figname="energy_vs_phasefield",
-                               ylabel='Energy'):
+                               ylabel='Energy', semilogy=False):
 
     fh = plt.figure(figname)
     fh.clear(); ah=fh.subplots()
 
-    ah.plot(mean_phasefield_values, potential_vs_phasefield, '-k')
+    if semilogy:
+        ah.semilogy(phasefield_fractions, energy_vs_phasefield, '-')
+    else:
+        ah.plot(phasefield_fractions, energy_vs_phasefield, '-')
 
     ah.set_ylabel(ylabel)
     ah.set_xlabel('Phasefield fraction')
@@ -323,15 +326,37 @@ def plot_energy_vs_phasefields(potential_vs_phasefield,
     return fh, figname
 
 
-def plot_phasefiled(p, figname="final_phasefield"):
+def plot_phasefiled(p, figname="phasefield"):
 
     fh = plt.figure(figname)
     fh.clear(); ah=fh.subplots()
 
     dolfin.plot(p)
+    
+    plt.title('Phasefield, $p$\n('
+              + r'$p_\mathrm{min}$ = '
+              + f'{p.vector().get_local().min():.3f}, '
+              + r'$p_\mathrm{max}$ = '
+              + f'{p.vector().get_local().max():.3f})')
 
-    plt.title('Phase-field, p\n(p_min = {0:.5}; p_max = {1:.5})'.format(
-        p.vector().get_local().min(), p.vector().get_local().max()))
+    fh.tight_layout()
+    fh.show()
+
+    return fh, figname
+
+
+def plot_material_fraction(m, figname="material_fraction"):
+
+    fh = plt.figure(figname)
+    fh.clear(); ah=fh.subplots()
+
+    dolfin.plot(m)
+
+    plt.title('Material fraction, $m$\n('
+              + r'$m_\mathrm{min}$ = '
+              + f'{m.vector().get_local().min():.3f}, '
+              + r'$m_\mathrm{max}$ = '
+              + f'{m.vector().get_local().max():.3f})')
 
     fh.tight_layout()
     fh.show()
