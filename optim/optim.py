@@ -305,7 +305,7 @@ class TopologyOptimizer:
             else:
                 divergences_count += 1
                 if divergences_count > maximum_divergences:
-                    logger.error('Reached maximum number of divergences [BREAK]')
+                    logger.info('Reached maximum number of divergences [BREAK]')
                     is_converged = False
                     break
 
@@ -336,10 +336,6 @@ class TopologyOptimizer:
             # Weighted-average phasefield advance direction
             dp_arr = x_W * (-weight_W/math.sqrt(x_W.dot(x_W))) \
                    + x_R * (-weight_R/math.sqrt(x_R.dot(x_R)))
-
-            # NOTE: Results using L_inf-norm are inferior to L_2-norm
-            # dp_arr = x_W * (-weight_W/max(-x_W.min(), x_W.max())) \
-            #        + x_R * (-weight_R/max(-x_R.min(), x_R.max()))
 
             # Enforce phasefield lower and upper bounds
             dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0

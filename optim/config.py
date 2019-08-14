@@ -29,10 +29,10 @@ logger = logging.getLogger()
 
 
 parameters_topology_solver = {
-    'convergence_tolerance': 1e-4,
+    'convergence_tolerance': 1e-3,
     'minimum_convergences': 3,
     'maximum_divergences': 2,
-    'maximum_iterations': 1500,
+    'maximum_iterations': 1000,
     }
 
 parameters_distance_solver = {
@@ -42,7 +42,7 @@ parameters_distance_solver = {
     }
 
 parameters_nonlinear_solver = {
-    'nonlinear_solver': 'snes',
+    'nonlinear_solver': 'newton',
     'symmetric': True,
     'print_matrix': False,
     'print_rhs': False,

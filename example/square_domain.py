@@ -114,40 +114,51 @@ if __name__ == "__main__":
 
     phasefield_regularization_weight = [
         # 0.400,
-        0.425,
-        # 0.450,
+        # 0.425,
+        0.450,
+        # 0.475,
         ]
 
     number_of_defects_per_dimension = [
         # 1,
-        2,
+        # 2,
         # 3,
         # 4,
+        6,
+        # 8,
         ]
 
     defect_offset_x = 1e-3*0
     defect_offset_y = 1e-3*0
 
-    defect_nucleation_elemental_diameter = 5.0
-    phasefield_collision_elemental_distance = 5.0
+    defect_nucleation_elemental_diameter = 12.0
+    phasefield_collision_elemental_distance = 6.0
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
-        0.01,
+        # 0.02500,
+        # 0.01000,
+        0.00500,
+        # 0.00250,
+        # 0.00125,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        0.01,
+        # 0.050,
+        # 0.025,
+        0.010,
+        # 0.005,
         ]
 
     # Phasefield convergence tolerance (L_inf-norm)
     phasefield_convergence_tolerance = 1e-3
+    phasefield_maximum_domain_fraction = 0.0 # 1.0
 
     ### Discretization parameters
 
     # Displacement function degree
-    displacement_degree = 2
+    displacement_degree = 1 # 1, 2
 
     # Phasefield function degree
     phasefield_degree = 1
@@ -158,13 +169,13 @@ if __name__ == "__main__":
 
     num_elements_along_edge = [
         # 30,
-        40,
+        # 40,
         # 41,
         # 60,
         # 61,
         # 80,
         # 81,
-        # 160,
+        160,
         # 161,
         # 320,
         # 321,
@@ -190,10 +201,14 @@ if __name__ == "__main__":
     defect_nucleation_pattern,
     number_of_defects_per_dimension,
     phasefield_regularization_weight,
+    phasefield_fraction_increment,
+    phasefield_iteration_stepsize,
     ) = utility.make_parameter_combinations_for_zipping(
     defect_nucleation_pattern,
     number_of_defects_per_dimension,
     phasefield_regularization_weight,
+    phasefield_fraction_increment,
+    phasefield_iteration_stepsize,
     )
 
     for (
@@ -422,6 +437,7 @@ if __name__ == "__main__":
                     phasefield_fraction_increment_i,
                     phasefield_regularization_weight_i,
                     phasefield_convergence_tolerance,
+                    phasefield_maximum_domain_fraction,
                     solution_writer.periodic_write,
                     )
 
@@ -495,20 +511,20 @@ if __name__ == "__main__":
                     figname="potential_energy_vs_iterations",
                     ylabel="Normalized potential energy"))
 
-                figure_handles.append(utility.plot_energy_vs_iterations(
-                    normalized_energy_vs_iterations,
-                    figname="potential_energy_vs_iterations_semilogy",
-                    ylabel="Normalized potential energy", semilogy=True))
+                # figure_handles.append(utility.plot_energy_vs_iterations(
+                #     normalized_energy_vs_iterations,
+                #     figname="potential_energy_vs_iterations_semilogy",
+                #     ylabel="Normalized potential energy", semilogy=True))
 
                 figure_handles.append(utility.plot_energy_vs_phasefields(
                     normalized_energy_vs_phasefield, phasefield_fractions,
                     figname="potential_energy_vs_phasefield",
                     ylabel="Normalized potential energy"))
 
-                figure_handles.append(utility.plot_energy_vs_phasefields(
-                    normalized_energy_vs_phasefield, phasefield_fractions,
-                    figname="potential_energy_vs_phasefield_semilogy",
-                    ylabel="Normalized potential energy", semilogy=True))
+                # figure_handles.append(utility.plot_energy_vs_phasefields(
+                #     normalized_energy_vs_phasefield, phasefield_fractions,
+                #     figname="potential_energy_vs_phasefield_semilogy",
+                #     ylabel="Normalized potential energy", semilogy=True))
 
                 figure_handles.append(utility.plot_phasefiled(p))
 

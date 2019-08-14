@@ -1,22 +1,19 @@
 .*
 *.pyc
-*.png
-*.jpg
-*.pdf
-*.pvd
-*.vtu
 
-notes.py
-notes.txt
+/notes.py
+/notes.txt
 
 __pycache__
 
-**/temp*
-**/test*
+docs/
+temp/
+test/
 
-**/archive
-**/outputs
-**/results
-**/results_old
+results/
+results_ktt/
+results_old/
+
+rsync_exclude_files.txt
 
 !.gitignore

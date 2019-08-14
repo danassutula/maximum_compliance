@@ -129,6 +129,7 @@ def solve_compliance_maximization_problem(
     phasefield_fraction_increment=1e-2,
     phasefield_regularization_weight=0.450,
     phasefield_convergence_tolerance=None,
+    phasefield_maximum_domain_fraction=1.0,
     iteration_state_recording_function=None):
     '''
     Parameters
@@ -185,7 +186,7 @@ def solve_compliance_maximization_problem(
     iterations_failed = False
     count_stop_requests = 0
 
-    while True:
+    while phasefield_fraction_i < phasefield_maximum_domain_fraction:
 
         try:
 
@@ -217,12 +218,12 @@ def solve_compliance_maximization_problem(
 
         elif converged_i and \
           iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_CONVERGED:
-            logger.info('Convergence within a threshold number of iterations')
+            logger.info('Converged within a threshold number of iterations')
             count_stop_requests += 1
 
         elif not converged_i and \
           iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_DIVERGED:
-            logger.info('Divergence within a threshold number of iterations')
+            logger.info('Diverged within a threshold number of iterations')
             count_stop_requests += 1
 
         else:
@@ -233,6 +234,9 @@ def solve_compliance_maximization_problem(
             break
 
         phasefield_fraction_i += phasefield_fraction_increment
+
+    else:
+        logger.warning('Reached upper limit of phasefield domain fraction')
 
     return iterations_failed, energy_vs_iterations, \
            energy_vs_phasefield, phasefield_fractions, \

@@ -1,3 +1,6 @@
+"""
+Some useful to help with problem setup.
+"""
 
 import os
 import dolfin
@@ -332,7 +335,7 @@ def plot_phasefiled(p, figname="phasefield"):
     fh.clear(); ah=fh.subplots()
 
     dolfin.plot(p)
-    
+
     plt.title('Phasefield, $p$\n('
               + r'$p_\mathrm{min}$ = '
               + f'{p.vector().get_local().min():.3f}, '
