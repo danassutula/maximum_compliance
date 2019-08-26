@@ -392,3 +392,29 @@ def meshgrid_checker_asymmetric(xlim, ylim, nx, ny):
     grid_B = meshgrid_uniform(xlim_B, ylim_B, nx_B, ny_B)
 
     return np.concatenate((grid_A, grid_B), axis=0)
+
+
+def pertub_gridrows(xs, nx, ny, dx, rowstep=2):
+
+    if len(xs) != nx*ny:
+        raise ValueError('Expected `len(xs) == nx*ny`')
+
+    xs = xs.reshape((nx,ny,2)).copy()
+
+    xs[0::rowstep,:] += [dx/2, 0.0]
+    xs[1::rowstep,:] -= [dx/2, 0.0]
+
+    return xs.reshape((-1,2))
+
+
+def pertub_gridcols(xs, nx, ny, dy, colstep=2):
+
+    if len(xs) != nx*ny:
+        raise ValueError('Expected `len(xs) == nx*ny`')
+
+    xs = xs.reshape((nx,ny,2)).transpose((1,0,2)).copy()
+
+    xs[0::colstep,:] += [0.0, dy/2]
+    xs[1::colstep,:] -= [0.0, dy/2]
+
+    return xs.reshape((-1,2))

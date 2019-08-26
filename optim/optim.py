@@ -441,7 +441,7 @@ class TopologyOptimizer:
 
         self._p_vec_global[:] = p_arr
 
-        assert all(abs(assemble(C_i)) < tol_C_i
+        assert all(abs(assemble(C_i)) < tol_C_i * 10.0
             for C_i, tol_C_i in zip(self._C, self._tol_C))
 
         # Closest phasefield indices (at dof positions)

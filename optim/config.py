@@ -32,7 +32,7 @@ parameters_topology_solver = {
     'convergence_tolerance': 1e-3,
     'minimum_convergences': 3,
     'maximum_divergences': 2,
-    'maximum_iterations': 1000,
+    'maximum_iterations': 1500,
     }
 
 parameters_distance_solver = {

@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
 """
-Created on 01/10/2018
-
-@author: Danas Sutula
 
 Todos
 -----
@@ -13,11 +10,16 @@ volume fraction value, it does not make sense to continue trying to optimize.
 
 BCs: strong
 
+Credits
+-------
+Danas Sutula, Technical University of Liberec, 01/10/2018
+
 """
 
 import config
 
 import os
+import sys
 import time
 import math
 import scipy
@@ -108,14 +110,14 @@ if __name__ == "__main__":
     incremental_boundary_displacement_value = [0.1, 0.2]
 
     defect_nucleation_pattern = [
+        "uniform_wout_margin",
         "uniform_with_margin",
-        # "uniform_wout_margin",
         ]
 
     phasefield_regularization_weight = [
         # 0.400,
-        # 0.425,
-        0.450,
+        0.425,
+        # 0.450,
         # 0.475,
         ]
 
@@ -124,36 +126,43 @@ if __name__ == "__main__":
         # 2,
         # 3,
         # 4,
-        6,
+        # 6,
         # 8,
         ]
 
-    defect_offset_x = 1e-3*0
-    defect_offset_y = 1e-3*0
+    defect_offset_x = 1e-5 * 0
+    defect_offset_y = 1e-5 * 0
 
-    defect_nucleation_elemental_diameter = 12.0
-    phasefield_collision_elemental_distance = 6.0
+    defect_perturb_x = 1e-3 * 1
+    defect_perturb_y = 1e-3 * 0
+
+    defect_nucleation_diameter = 0.08 # or None
+    defect_nucleation_elemental_diameter = 8.0 # Otherwise
+
+    phasefield_collision_distance = None # or None
+    phasefield_collision_elemental_distance = 6.0 # Otherwise
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
-        # 0.02500,
-        # 0.01000,
-        0.00500,
+        # 0.02000,
+        0.01000,
+        # 0.00500,
         # 0.00250,
-        # 0.00125,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        # 0.050,
-        # 0.025,
-        0.010,
-        # 0.005,
+        # 0.04,
+        # 0.02,
+        # 0.01,
         ]
 
     # Phasefield convergence tolerance (L_inf-norm)
     phasefield_convergence_tolerance = 1e-3
-    phasefield_maximum_domain_fraction = 0.0 # 1.0
+    phasefield_maximum_domain_fraction = 1.0
+
+    if phasefield_maximum_domain_fraction != 1.0:
+        logger.warning('phasefield_maximum_domain_fraction != 1.0')
 
     ### Discretization parameters
 
@@ -167,7 +176,7 @@ if __name__ == "__main__":
     mesh_pattern = "crossed"
     # mesh_pattern = "left"
 
-    num_elements_along_edge = [
+    number_of_elements_along_edge = [
         # 30,
         # 40,
         # 41,
@@ -181,18 +190,42 @@ if __name__ == "__main__":
         # 321,
         ] # NOTE: Should try both even and odd numbers of elements
 
+    if boundary_displacement_value is None or not boundary_displacement_value:
+        boundary_displacement_value = eval(input('\nboundary_displacement_value:\n'))
+
+    if phasefield_regularization_weight is None or not phasefield_regularization_weight:
+        phasefield_regularization_weight = eval(input('\nphasefield_regularization_weight:\n'))
+
+    if number_of_defects_per_dimension is None or not number_of_defects_per_dimension:
+        number_of_defects_per_dimension = eval(input('\nnumber_of_defects_per_dimension:\n'))
+
+    if phasefield_fraction_increment is None or not phasefield_fraction_increment:
+        phasefield_fraction_increment = eval(input('\nphasefield_fraction_increment:\n'))
+
+    if phasefield_iteration_stepsize is None or not phasefield_iteration_stepsize:
+        phasefield_iteration_stepsize = eval(input('\nphasefield_iteration_stepsize:\n'))
+
+    if number_of_elements_along_edge is None or not number_of_elements_along_edge:
+        number_of_elements_along_edge = eval(input('\nnumber_of_elements_along_edge:\n'))
+
+    if defect_perturb_x is None:
+        defect_perturb_x = eval(input('\ndefect_perturb_x:\n'))
+
+    if defect_perturb_y is None:
+        defect_perturb_y = eval(input('\ndefect_perturb_y:\n'))
+
     ### Study parameter grid
 
     # Parameter for the outter loop
     (
     load_type,
     material_model_name,
-    num_elements_along_edge,
+    number_of_elements_along_edge,
     boundary_displacement_value
     ) = utility.make_parameter_combinations_for_zipping(
     load_type,
     material_model_name,
-    num_elements_along_edge,
+    number_of_elements_along_edge,
     boundary_displacement_value,
     )
 
@@ -214,19 +247,19 @@ if __name__ == "__main__":
     for (
         load_type_i,
         material_model_name_i,
-        num_elements_along_edge_i,
+        number_of_elements_along_edge_i,
         boundary_displacement_value_i,
         ) in zip(
         load_type,
         material_model_name,
-        num_elements_along_edge,
+        number_of_elements_along_edge,
         boundary_displacement_value,
         ):
 
         ### Discretization
 
         mesh = utility.unit_square_mesh(
-            num_elements_along_edge_i, mesh_pattern)
+            number_of_elements_along_edge_i, mesh_pattern)
 
         mesh_x0, mesh_y0 = mesh.coordinates().min(axis=0)
         mesh_x1, mesh_y1 = mesh.coordinates().max(axis=0)
@@ -377,11 +410,31 @@ if __name__ == "__main__":
             defect_nucleation_centers = \
                 make_defect_nucleation_centers(defect_xlim, defect_ylim, nx, ny)
 
-            defect_nucleation_diameter = \
-                defect_nucleation_elemental_diameter * mesh.hmax() * (1+1e-4)
+            if defect_perturb_x:
+                defect_nucleation_centers = optim.helper.pertub_gridrows(
+                    defect_nucleation_centers, nx, ny, dx=defect_perturb_x)
 
-            phasefield_collision_distance = \
-                phasefield_collision_elemental_distance * mesh.hmax() * (1+1e-4)
+            if defect_perturb_y:
+                defect_nucleation_centers = optim.helper.pertub_gridcols(
+                    defect_nucleation_centers, nx, ny, dy=defect_perturb_y)
+
+            if defect_nucleation_diameter is not None:
+                defect_nucleation_diameter_i = defect_nucleation_diameter
+            else:
+                if defect_nucleation_elemental_diameter is None \
+                    or defect_nucleation_elemental_diameter == 0:
+                    raise RuntimeError('Require `defect_nucleation_elemental_diameter`')
+                defect_nucleation_diameter_i = \
+                    defect_nucleation_elemental_diameter * mesh.hmax() * (1+1e-4)
+
+            if phasefield_collision_distance is not None:
+                phasefield_collision_distance_i = phasefield_collision_distance
+            else:
+                if phasefield_collision_elemental_distance is None \
+                    or phasefield_collision_elemental_distance == 0:
+                    raise RuntimeError('Require `phasefield_collision_elemental_distance`')
+                phasefield_collision_distance_i = \
+                    phasefield_collision_elemental_distance * mesh.hmax() * (1+1e-4)
 
             problem_title = (
                 f"date({time.strftime('%m%d_%H%M')})-"
@@ -389,6 +442,8 @@ if __name__ == "__main__":
                 f"model({material_model_name_i})-"
                 f"mesh({mesh.num_vertices()})-"
                 f"defect({defect_nucleation_pattern_i})-"
+                f"perturb_x({bool(defect_perturb_x)})-"
+                f"perturb_y({bool(defect_perturb_y)})-"
                 f"count({number_of_defects_i})-"
                 f"disp({str(f'{boundary_displacement_value_i:.3f}').replace('.','d')})-"
                 f"regul({str(f'{phasefield_regularization_weight_i:.3f}').replace('.','d')})-"
@@ -431,8 +486,8 @@ if __name__ == "__main__":
                 optim.helper.solve_compliance_maximization_problem(
                     W, R, u, p, bcs,
                     defect_nucleation_centers,
-                    defect_nucleation_diameter,
-                    phasefield_collision_distance,
+                    defect_nucleation_diameter_i,
+                    phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
                     phasefield_regularization_weight_i,
