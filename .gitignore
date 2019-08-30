@@ -11,8 +11,7 @@ temp/
 test/
 
 results/
-results_ktt/
-results_old/
+results_ktt*/
 
 rsync_exclude_files.txt
 
