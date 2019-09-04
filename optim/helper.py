@@ -330,13 +330,13 @@ def make_defect_like_phasefield_array(V, xs, r):
     return ps
 
 
-def meshgrid_uniform(xlim, ylim, nx, ny):
+def meshgrid_uniform(xlim, ylim, nrow, ncol):
 
     x0, x1 = xlim
     y0, y1 = ylim
 
-    x = np.linspace(x0, x1, nx)
-    y = np.linspace(y0, y1, ny)
+    x = np.linspace(x0, x1, ncol)
+    y = np.linspace(y0, y1, nrow)
 
     x, y = np.meshgrid(x, y)
 
@@ -346,15 +346,15 @@ def meshgrid_uniform(xlim, ylim, nx, ny):
     return np.stack((x, y), axis=1)
 
 
-def meshgrid_uniform_with_margin(xlim, ylim, nx, ny):
+def meshgrid_uniform_with_margin(xlim, ylim, nrow, ncol):
 
-    margin_x = (xlim[1] - xlim[0]) / nx / 2
-    margin_y = (ylim[1] - ylim[0]) / ny / 2
+    margin_x = (xlim[1] - xlim[0]) / ncol / 2
+    margin_y = (ylim[1] - ylim[0]) / nrow / 2
 
     xlim = [xlim[0] + margin_x, xlim[1] - margin_x]
     ylim = [ylim[0] + margin_y, ylim[1] - margin_y]
 
-    return meshgrid_uniform(xlim, ylim, nx, ny)
+    return meshgrid_uniform(xlim, ylim, nrow, ncol)
 
 
 def meshgrid_checker_asymmetric(xlim, ylim, nx, ny):
@@ -394,12 +394,12 @@ def meshgrid_checker_asymmetric(xlim, ylim, nx, ny):
     return np.concatenate((grid_A, grid_B), axis=0)
 
 
-def pertub_gridrows(xs, nx, ny, dx, rowstep=2):
+def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
 
-    if len(xs) != nx*ny:
-        raise ValueError('Expected `len(xs) == nx*ny`')
+    if len(xs) != nrow*ncol:
+        raise ValueError('Expected `len(xs) == nrow*ncol`')
 
-    xs = xs.reshape((nx,ny,2)).copy()
+    xs = xs.reshape((nrow,ncol,2)).copy()
 
     xs[0::rowstep,:] += [dx/2, 0.0]
     xs[1::rowstep,:] -= [dx/2, 0.0]
@@ -407,12 +407,12 @@ def pertub_gridrows(xs, nx, ny, dx, rowstep=2):
     return xs.reshape((-1,2))
 
 
-def pertub_gridcols(xs, nx, ny, dy, colstep=2):
+def pertub_gridcols(xs, nrow, ncol, dy, colstep=2):
 
-    if len(xs) != nx*ny:
-        raise ValueError('Expected `len(xs) == nx*ny`')
+    if len(xs) != nrow*ncol:
+        raise ValueError('Expected `len(xs) == nrow*ncol`')
 
-    xs = xs.reshape((nx,ny,2)).transpose((1,0,2)).copy()
+    xs = xs.reshape((nrow,ncol,2)).transpose((1,0,2)).copy()
 
     xs[0::colstep,:] += [0.0, dy/2]
     xs[1::colstep,:] -= [0.0, dy/2]

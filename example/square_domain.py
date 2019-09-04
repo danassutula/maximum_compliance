@@ -1,20 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
+'''
 
-Todos
+Notes
 -----
-Need to come up with a criterion for stopping the incrementation of phasefield
-volume fraction. The phasefield is always successful in finding a more optimal
-phasefield for a given phasefield volume fraction; however, after some phasefield
-volume fraction value, it does not make sense to continue trying to optimize.
+* If a "control" or "fixed" parameter is specified as `None`, the parameter will
+need to be inputted by the user during runtime.
 
-BCs: strong
-
-Credits
--------
-Danas Sutula, Technical University of Liberec, 01/10/2018
-
-"""
+'''
 
 import config
 
@@ -110,7 +102,7 @@ if __name__ == "__main__":
     incremental_boundary_displacement_value = [0.1, 0.2]
 
     defect_nucleation_pattern = [
-        "uniform_wout_margin",
+        # "uniform_wout_margin",
         "uniform_with_margin",
         ]
 
@@ -121,26 +113,28 @@ if __name__ == "__main__":
         # 0.475,
         ]
 
-    number_of_defects_per_dimension = [
+    numbers_of_defects_in_dimensions = [
         # 1,
         # 2,
-        # 3,
         # 4,
-        # 6,
         # 8,
-        ]
+        # 12,
+        # 16,
+        (8,7)
+        ] # nrow/ncol or (nrow, ncol)
 
     defect_offset_x = 1e-5 * 0
     defect_offset_y = 1e-5 * 0
 
-    defect_perturb_x = 1e-3 * 1
-    defect_perturb_y = 1e-3 * 0
+    # defect_perturb_x = 1e-3 * 1
+    defect_perturb_x = None
+    defect_perturb_y = None # 1e-3 * 0
 
-    defect_nucleation_diameter = 0.08 # or None
-    defect_nucleation_elemental_diameter = 8.0 # Otherwise
+    defect_nucleation_diameter = 0.08 # or `None`, or "default"
+    defect_nucleation_elemental_diameter = 8.0 # Default fallback
 
-    phasefield_collision_distance = None # or None
-    phasefield_collision_elemental_distance = 6.0 # Otherwise
+    phasefield_collision_distance = "default" # or `None`, or "default"
+    phasefield_collision_elemental_distance = 6.0 # Default fallback
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
@@ -152,7 +146,7 @@ if __name__ == "__main__":
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        # 0.04,
+        0.04,
         # 0.02,
         # 0.01,
         ]
@@ -177,7 +171,6 @@ if __name__ == "__main__":
     # mesh_pattern = "left"
 
     number_of_elements_along_edge = [
-        # 30,
         # 40,
         # 41,
         # 60,
@@ -190,14 +183,16 @@ if __name__ == "__main__":
         # 321,
         ] # NOTE: Should try both even and odd numbers of elements
 
+    ### Input control parameters (if not defined above)
+
     if boundary_displacement_value is None or not boundary_displacement_value:
         boundary_displacement_value = eval(input('\nboundary_displacement_value:\n'))
 
     if phasefield_regularization_weight is None or not phasefield_regularization_weight:
         phasefield_regularization_weight = eval(input('\nphasefield_regularization_weight:\n'))
 
-    if number_of_defects_per_dimension is None or not number_of_defects_per_dimension:
-        number_of_defects_per_dimension = eval(input('\nnumber_of_defects_per_dimension:\n'))
+    if numbers_of_defects_in_dimensions is None or not numbers_of_defects_in_dimensions:
+        numbers_of_defects_in_dimensions = eval(input('\nnumbers_of_defects_in_dimensions:\n'))
 
     if phasefield_fraction_increment is None or not phasefield_fraction_increment:
         phasefield_fraction_increment = eval(input('\nphasefield_fraction_increment:\n'))
@@ -208,13 +203,21 @@ if __name__ == "__main__":
     if number_of_elements_along_edge is None or not number_of_elements_along_edge:
         number_of_elements_along_edge = eval(input('\nnumber_of_elements_along_edge:\n'))
 
+    ### Input fixed parameters (if not defined above)
+
+    if defect_nucleation_diameter is None:
+        defect_nucleation_diameter = eval(input('\ndefect_nucleation_diameter:\n'))
+
+    if phasefield_collision_distance is None:
+        phasefield_collision_distance = eval(input('\nphasefield_collision_distance:\n'))
+
     if defect_perturb_x is None:
         defect_perturb_x = eval(input('\ndefect_perturb_x:\n'))
 
     if defect_perturb_y is None:
         defect_perturb_y = eval(input('\ndefect_perturb_y:\n'))
 
-    ### Study parameter grid
+    ### Control parameter grid
 
     # Parameter for the outter loop
     (
@@ -222,7 +225,7 @@ if __name__ == "__main__":
     material_model_name,
     number_of_elements_along_edge,
     boundary_displacement_value
-    ) = utility.make_parameter_combinations_for_zipping(
+    ) = utility.make_parameter_combinations(
     load_type,
     material_model_name,
     number_of_elements_along_edge,
@@ -232,13 +235,13 @@ if __name__ == "__main__":
     # Parameters for the inner loop
     (
     defect_nucleation_pattern,
-    number_of_defects_per_dimension,
+    numbers_of_defects_in_dimensions,
     phasefield_regularization_weight,
     phasefield_fraction_increment,
     phasefield_iteration_stepsize,
-    ) = utility.make_parameter_combinations_for_zipping(
+    ) = utility.make_parameter_combinations(
     defect_nucleation_pattern,
-    number_of_defects_per_dimension,
+    numbers_of_defects_in_dimensions,
     phasefield_regularization_weight,
     phasefield_fraction_increment,
     phasefield_iteration_stepsize,
@@ -376,13 +379,13 @@ if __name__ == "__main__":
 
         for (
             defect_nucleation_pattern_i,
-            number_of_defects_per_dimension_i,
+            numbers_of_defects_per_dimension_i,
             phasefield_regularization_weight_i,
             phasefield_fraction_increment_i,
             phasefield_iteration_stepsize_i,
             ) in zip(
             defect_nucleation_pattern,
-            number_of_defects_per_dimension,
+            numbers_of_defects_in_dimensions,
             phasefield_regularization_weight,
             phasefield_fraction_increment,
             phasefield_iteration_stepsize,
@@ -402,23 +405,28 @@ if __name__ == "__main__":
             else:
                 raise ValueError('`defect_nucleation_pattern_i`?')
 
-            nx = number_of_defects_per_dimension_i
-            ny = number_of_defects_per_dimension_i
+            if hasattr(numbers_of_defects_per_dimension_i, '__len__'):
+                if len(numbers_of_defects_per_dimension_i) != 2:
+                    raise RuntimeError('Expected `len(numbers_of_defects_per_dimension_i) == 2`')
+                nrow, ncol = numbers_of_defects_per_dimension_i
+            else:
+                nrow = ncol = numbers_of_defects_per_dimension_i
 
-            number_of_defects_i = nx * ny
+            number_of_defects_i = nrow * ncol
 
             defect_nucleation_centers = \
-                make_defect_nucleation_centers(defect_xlim, defect_ylim, nx, ny)
+                make_defect_nucleation_centers(defect_xlim, defect_ylim, nrow, ncol)
 
             if defect_perturb_x:
                 defect_nucleation_centers = optim.helper.pertub_gridrows(
-                    defect_nucleation_centers, nx, ny, dx=defect_perturb_x)
+                    defect_nucleation_centers, nrow, ncol, dx=defect_perturb_x)
 
             if defect_perturb_y:
                 defect_nucleation_centers = optim.helper.pertub_gridcols(
-                    defect_nucleation_centers, nx, ny, dy=defect_perturb_y)
+                    defect_nucleation_centers, nrow, ncol, dy=defect_perturb_y)
 
-            if defect_nucleation_diameter is not None:
+            if not (defect_nucleation_diameter is None or \
+                    defect_nucleation_diameter is "default"):
                 defect_nucleation_diameter_i = defect_nucleation_diameter
             else:
                 if defect_nucleation_elemental_diameter is None \
@@ -427,7 +435,8 @@ if __name__ == "__main__":
                 defect_nucleation_diameter_i = \
                     defect_nucleation_elemental_diameter * mesh.hmax() * (1+1e-4)
 
-            if phasefield_collision_distance is not None:
+            if not (phasefield_collision_distance is None or \
+                    phasefield_collision_distance is "default"):
                 phasefield_collision_distance_i = phasefield_collision_distance
             else:
                 if phasefield_collision_elemental_distance is None \
