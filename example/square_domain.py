@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
 
-Notes
------
-* If a "control" or "fixed" parameter is specified as `None`, the parameter will
-need to be inputted by the user during runtime.
-
 '''
 
 import config
@@ -42,6 +37,76 @@ SAFE_TO_REMOVE_FILE_TYPES = \
     ('.out', '.npy', '.pvd', '.vtu', '.png', '.svg', '.eps', '.pdf')
 
 
+def generate_defect_nucleation_centers(case):
+
+    slack = 1e-2
+
+
+    if case == 0:
+        # Diagonal pattern
+        defect_centers = np.array([[0.0, 0.0+slack],
+                                   [1.0, 1.0-slack]])
+
+    elif case == 1:
+        # 2-by-2
+        defect_centers = np.array([[0+slack,0+slack],
+                                   [1-slack,0+slack],
+                                   [1-slack,1-slack],
+                                   [0+slack,1-slack]])
+
+    elif case == 2:
+        # Spiral pattern
+        defect_centers = np.array([[0+slack,0],
+                                   [1,0+slack],
+                                   [1-slack,1],
+                                   [0,1-slack]])
+
+
+    elif case == 3:
+        # 2(squeezed)-by-2
+        defect_centers = np.array([[0,0+slack],
+                                   [1,0+slack],
+                                   [1,1-slack],
+                                   [0,1-slack]])
+
+    # elif case == 3:
+    #     # 2(squeezed)-by-3
+    #     defect_centers = np.array([[  0, 0+slack],[  1, 0+slack],
+    #                                [  1, 1-slack],[  0, 1-slack],
+    #                                [0.5, 0+slack],[0.5, 1-slack]])
+
+    elif case == 4:
+        # 8
+        defect_centers = np.array([[0+slack,0+slack],
+                                   [1-slack,0+slack],
+                                   [1-slack,1-slack],
+                                   [0+slack,1-slack],
+                                   [0.5+slack, 0.0+slack],
+                                   [1.0-slack, 0.5+slack],
+                                   [0.5-slack, 1.0-slack],
+                                   [0.0+slack,0.5-slack]])
+
+    # elif case == 5:
+    #     # 12
+    #     defect_centers = np.array([[0+slack,0+slack],
+    #                                [1-slack,0+slack],
+    #                                [1-slack,1-slack],
+    #                                [0+slack,1-slack],
+    #                                [0.25-slack, 0.0+slack],
+    #                                [0.75+slack, 0.0+slack],
+    #                                [1.0-slack, 0.25-slack],
+    #                                [1.0-slack, 0.75+slack],
+    #                                [0.25-slack, 1.0-slack],
+    #                                [0.75+slack, 1.0-slack],
+    #                                [0.0+slack,0.25-slack],
+    #                                [0.0+slack,0.75+slack]])
+
+    else:
+        raise ValueError('Parameter `case`?')
+
+    return defect_centers
+
+
 def phasefield_regularization(p):
     '''Phasefield regularization.'''
     return dolfin.grad(p)**2
@@ -57,7 +122,7 @@ def material_integrity_model(p):
     '''
 
     # Minimum (residual) material integrity
-    rho_min = Constant(1e-5)
+    rho_min = Constant(1e-6)
 
     # Material degradation exponent (`>1`)
     beta = 2
@@ -67,7 +132,7 @@ def material_integrity_model(p):
 
 if __name__ == "__main__":
 
-    plot_results = True
+    plot_results = False
     write_results = True
 
     # Write solutions every number of solver iterations
@@ -94,44 +159,32 @@ if __name__ == "__main__":
         ]
 
     boundary_displacement_value = [
-        0.01,
-        # None, # To replace `None` with `incremental_boundary_displacement_value`
-        ]
+        0.1,
+        # [0.1, 0.2],
+        ] # NOTE: If an element is a sequence, the end-value of the sequence
+          #       will be used but the value will be attained incrementally.
 
-    # Use incremental displacement if deformation is non-linear
-    incremental_boundary_displacement_value = [0.1, 0.2]
-
-    defect_nucleation_pattern = [
-        # "uniform_wout_margin",
-        "uniform_with_margin",
+    defect_nucleation_centers = [
+        np.array([[0,0.50],[1,0.50],[0.50,0],[0.50,1]]),
+        np.array([[0,0.25],[1,0.75],[0.75,0],[0.25,1]]),
+        optim.helper.meshgrid_uniform([0,1], [0,1], 2, 2),
+        optim.helper.meshgrid_uniform([0,1], [0,1], 4, 4),
+        optim.helper.pertub_gridrows(optim.helper.meshgrid_uniform(
+            [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-3),
         ]
 
     phasefield_regularization_weight = [
+        # 0.300,
+        # 0.350,
         # 0.400,
-        0.425,
-        # 0.450,
+        # 0.425,
+        0.450,
+        # 0.460,
         # 0.475,
         ]
 
-    numbers_of_defects_in_dimensions = [
-        # 1,
-        # 2,
-        # 4,
-        # 8,
-        # 12,
-        # 16,
-        (8,7)
-        ] # nrow/ncol or (nrow, ncol)
-
-    defect_offset_x = 1e-5 * 0
-    defect_offset_y = 1e-5 * 0
-
-    # defect_perturb_x = 1e-3 * 1
-    defect_perturb_x = None
-    defect_perturb_y = None # 1e-3 * 0
-
-    defect_nucleation_diameter = 0.08 # or `None`, or "default"
-    defect_nucleation_elemental_diameter = 8.0 # Default fallback
+    defect_nucleation_diameter = "default" # or `None`, or "default"
+    defect_nucleation_elemental_diameter = 6.0 # Default fallback
 
     phasefield_collision_distance = "default" # or `None`, or "default"
     phasefield_collision_elemental_distance = 6.0 # Default fallback
@@ -146,13 +199,15 @@ if __name__ == "__main__":
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        0.04,
-        # 0.02,
-        # 0.01,
+        # 0.040,
+        # 0.020,
+        0.010,
+        # 0.005,
         ]
 
     # Phasefield convergence tolerance (L_inf-norm)
-    phasefield_convergence_tolerance = 1e-3
+    phasefield_convergence_stepsize_fraction = 1/3
+
     phasefield_maximum_domain_fraction = 1.0
 
     if phasefield_maximum_domain_fraction != 1.0:
@@ -171,13 +226,15 @@ if __name__ == "__main__":
     # mesh_pattern = "left"
 
     number_of_elements_along_edge = [
+        # 30,
         # 40,
         # 41,
         # 60,
-        # 61,
+        61,
         # 80,
         # 81,
-        160,
+        # 121,
+        # 160,
         # 161,
         # 320,
         # 321,
@@ -190,9 +247,6 @@ if __name__ == "__main__":
 
     if phasefield_regularization_weight is None or not phasefield_regularization_weight:
         phasefield_regularization_weight = eval(input('\nphasefield_regularization_weight:\n'))
-
-    if numbers_of_defects_in_dimensions is None or not numbers_of_defects_in_dimensions:
-        numbers_of_defects_in_dimensions = eval(input('\nnumbers_of_defects_in_dimensions:\n'))
 
     if phasefield_fraction_increment is None or not phasefield_fraction_increment:
         phasefield_fraction_increment = eval(input('\nphasefield_fraction_increment:\n'))
@@ -211,53 +265,28 @@ if __name__ == "__main__":
     if phasefield_collision_distance is None:
         phasefield_collision_distance = eval(input('\nphasefield_collision_distance:\n'))
 
-    if defect_perturb_x is None:
-        defect_perturb_x = eval(input('\ndefect_perturb_x:\n'))
-
-    if defect_perturb_y is None:
-        defect_perturb_y = eval(input('\ndefect_perturb_y:\n'))
-
     ### Control parameter grid
 
-    # Parameter for the outter loop
-    (
-    load_type,
-    material_model_name,
-    number_of_elements_along_edge,
-    boundary_displacement_value
-    ) = utility.make_parameter_combinations(
-    load_type,
-    material_model_name,
-    number_of_elements_along_edge,
-    boundary_displacement_value,
-    )
+    outer_loop_parameters = optim.helper.make_parameter_combinations(
+        load_type,
+        material_model_name,
+        number_of_elements_along_edge,
+        boundary_displacement_value,
+        )
 
-    # Parameters for the inner loop
-    (
-    defect_nucleation_pattern,
-    numbers_of_defects_in_dimensions,
-    phasefield_regularization_weight,
-    phasefield_fraction_increment,
-    phasefield_iteration_stepsize,
-    ) = utility.make_parameter_combinations(
-    defect_nucleation_pattern,
-    numbers_of_defects_in_dimensions,
-    phasefield_regularization_weight,
-    phasefield_fraction_increment,
-    phasefield_iteration_stepsize,
-    )
+    inner_loop_parameters = optim.helper.make_parameter_combinations(
+        defect_nucleation_centers,
+        phasefield_regularization_weight,
+        phasefield_fraction_increment,
+        phasefield_iteration_stepsize,
+        )
 
     for (
         load_type_i,
         material_model_name_i,
         number_of_elements_along_edge_i,
         boundary_displacement_value_i,
-        ) in zip(
-        load_type,
-        material_model_name,
-        number_of_elements_along_edge,
-        boundary_displacement_value,
-        ):
+        ) in outer_loop_parameters:
 
         ### Discretization
 
@@ -267,8 +296,8 @@ if __name__ == "__main__":
         mesh_x0, mesh_y0 = mesh.coordinates().min(axis=0)
         mesh_x1, mesh_y1 = mesh.coordinates().max(axis=0)
 
-        defect_xlim = mesh_x0 + defect_offset_x, mesh_x1 + defect_offset_x
-        defect_ylim = mesh_y0 + defect_offset_y, mesh_y1 + defect_offset_y
+        defect_xlim = mesh_x0, mesh_x1
+        defect_ylim = mesh_y0, mesh_y1
 
         ### Boundary subdomains
 
@@ -365,9 +394,9 @@ if __name__ == "__main__":
         p.vector()[:] = 0.0
         u.vector()[:] = 0.0
 
-        if boundary_displacement_value_i is None:
-            for boundary_displacement_value_i in \
-             incremental_boundary_displacement_value:
+        if hasattr(boundary_displacement_value_i, '__len__'):
+            for boundary_displacement_value_i \
+                in boundary_displacement_value_i:
                 set_value_bcs(boundary_displacement_value_i)
                 dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
         else:
@@ -378,82 +407,37 @@ if __name__ == "__main__":
         undamaged_potential_energy = dolfin.assemble(W)
 
         for (
-            defect_nucleation_pattern_i,
-            numbers_of_defects_per_dimension_i,
+            defect_nucleation_centers_i,
             phasefield_regularization_weight_i,
             phasefield_fraction_increment_i,
             phasefield_iteration_stepsize_i,
-            ) in zip(
-            defect_nucleation_pattern,
-            numbers_of_defects_in_dimensions,
-            phasefield_regularization_weight,
-            phasefield_fraction_increment,
-            phasefield_iteration_stepsize,
-            ):
+            ) in inner_loop_parameters:
 
             problem_start_time = time.time()
-
-            if defect_nucleation_pattern_i == "uniform_wout_margin":
-                make_defect_nucleation_centers = optim.helper.meshgrid_uniform
-
-            elif defect_nucleation_pattern_i == "uniform_with_margin":
-                make_defect_nucleation_centers = optim.helper.meshgrid_uniform_with_margin
-
-            elif defect_nucleation_pattern_i == "checker":
-                make_defect_nucleation_centers = optim.helper.meshgrid_checker
-
-            else:
-                raise ValueError('`defect_nucleation_pattern_i`?')
-
-            if hasattr(numbers_of_defects_per_dimension_i, '__len__'):
-                if len(numbers_of_defects_per_dimension_i) != 2:
-                    raise RuntimeError('Expected `len(numbers_of_defects_per_dimension_i) == 2`')
-                nrow, ncol = numbers_of_defects_per_dimension_i
-            else:
-                nrow = ncol = numbers_of_defects_per_dimension_i
-
-            number_of_defects_i = nrow * ncol
-
-            defect_nucleation_centers = \
-                make_defect_nucleation_centers(defect_xlim, defect_ylim, nrow, ncol)
-
-            if defect_perturb_x:
-                defect_nucleation_centers = optim.helper.pertub_gridrows(
-                    defect_nucleation_centers, nrow, ncol, dx=defect_perturb_x)
-
-            if defect_perturb_y:
-                defect_nucleation_centers = optim.helper.pertub_gridcols(
-                    defect_nucleation_centers, nrow, ncol, dy=defect_perturb_y)
 
             if not (defect_nucleation_diameter is None or \
                     defect_nucleation_diameter is "default"):
                 defect_nucleation_diameter_i = defect_nucleation_diameter
             else:
-                if defect_nucleation_elemental_diameter is None \
-                    or defect_nucleation_elemental_diameter == 0:
-                    raise RuntimeError('Require `defect_nucleation_elemental_diameter`')
                 defect_nucleation_diameter_i = \
-                    defect_nucleation_elemental_diameter * mesh.hmax() * (1+1e-4)
+                    defect_nucleation_elemental_diameter * mesh.hmax() * (1+EPS)
 
             if not (phasefield_collision_distance is None or \
                     phasefield_collision_distance is "default"):
                 phasefield_collision_distance_i = phasefield_collision_distance
             else:
-                if phasefield_collision_elemental_distance is None \
-                    or phasefield_collision_elemental_distance == 0:
-                    raise RuntimeError('Require `phasefield_collision_elemental_distance`')
                 phasefield_collision_distance_i = \
-                    phasefield_collision_elemental_distance * mesh.hmax() * (1+1e-4)
+                    phasefield_collision_elemental_distance * mesh.hmax() * (1+EPS)
+
+            phasefield_convergence_tolerance_i = \
+                phasefield_iteration_stepsize_i * phasefield_convergence_stepsize_fraction
 
             problem_title = (
                 f"date({time.strftime('%m%d_%H%M')})-"
                 f"load({load_type_i})-"
                 f"model({material_model_name_i})-"
                 f"mesh({mesh.num_vertices()})-"
-                f"defect({defect_nucleation_pattern_i})-"
-                f"perturb_x({bool(defect_perturb_x)})-"
-                f"perturb_y({bool(defect_perturb_y)})-"
-                f"count({number_of_defects_i})-"
+                f"count({len(defect_nucleation_centers_i)})-"
                 f"disp({str(f'{boundary_displacement_value_i:.3f}').replace('.','d')})-"
                 f"regul({str(f'{phasefield_regularization_weight_i:.3f}').replace('.','d')})-"
                 f"inc({str(f'{phasefield_fraction_increment_i:.3f}').replace('.','d')})-"
@@ -490,17 +474,32 @@ if __name__ == "__main__":
 
             u.vector()[:] = undamaged_solution_vector
 
+            # ### TEST (BEGIN)
+            #
+            # plt.figure().add_subplot(111).add_patch(plt.Rectangle(
+            #     (0, 0), 1, 1, color='b', alpha=0.5))
+            #
+            # plt.scatter(defect_nucleation_centers_i[:,0],
+            #             defect_nucleation_centers_i[:,1], 10, 'r')
+            #
+            # plt.axis('equal')
+            # plt.show()
+            #
+            # import ipdb; ipdb.set_trace()
+            #
+            # ### TEST (END)
+
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
                 optim.helper.solve_compliance_maximization_problem(
                     W, R, u, p, bcs,
-                    defect_nucleation_centers,
+                    defect_nucleation_centers_i,
                     defect_nucleation_diameter_i,
                     phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
                     phasefield_regularization_weight_i,
-                    phasefield_convergence_tolerance,
+                    phasefield_convergence_tolerance_i,
                     phasefield_maximum_domain_fraction,
                     solution_writer.periodic_write,
                     )

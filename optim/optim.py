@@ -9,6 +9,7 @@ University of Liberec, Czech Republic, 2018-2019
 import math
 import dolfin
 import numpy as np
+import scipy.linalg as linalg
 
 from dolfin import Constant
 from dolfin import Function
@@ -24,6 +25,8 @@ logger = config.logger
 
 EPS = 1e-12
 SEQUENCE_TYPES = (tuple, list)
+
+MINIMUM_HONING_ITERATIONS_MULTIPLIER = 10
 
 
 class TopologyOptimizer:
@@ -181,7 +184,7 @@ class TopologyOptimizer:
 
 
     def optimize(self, stepsize, regularization_weight, collision_distance,
-                 convergence_tolerance=None, minimum_convergences=None,
+                 convergence_tolerance=None, maximum_convergences=None,
                  maximum_divergences=None, maximum_iterations=None):
         '''
         Parameters
@@ -219,8 +222,8 @@ class TopologyOptimizer:
         if convergence_tolerance is None:
             convergence_tolerance = parameters['convergence_tolerance']
 
-        if minimum_convergences is None:
-            minimum_convergences = parameters['minimum_convergences']
+        if maximum_convergences is None:
+            maximum_convergences = parameters['maximum_convergences']
 
         if maximum_divergences is None:
             maximum_divergences = parameters['maximum_divergences']
@@ -231,8 +234,8 @@ class TopologyOptimizer:
         if convergence_tolerance < 0:
             raise ValueError('Require non-negative `convergence_tolerance`.')
 
-        if minimum_convergences < 0:
-            raise ValueError('Require non-negative `minimum_convergences`.')
+        if maximum_convergences < 0:
+            raise ValueError('Require non-negative `maximum_convergences`.')
 
         if maximum_divergences < 0:
             raise ValueError('Require non-negative `maximum_divergences`.')
@@ -259,6 +262,7 @@ class TopologyOptimizer:
         convergences_count = -1
         divergences_count = 0
         iterations_count = 0
+        progress_count = 0
         is_converged = None
 
         potentials = []
@@ -301,9 +305,16 @@ class TopologyOptimizer:
 
             if W_cur < W_min:
                 W_min = W_cur
-                divergences_count = 0
+
+                progress_count += 1
+                if progress_count == 3:
+                    divergences_count = 0
+
             else:
+
+                progress_count = 0
                 divergences_count += 1
+
                 if divergences_count > maximum_divergences:
                     logger.info('Reached maximum number of divergences [BREAK]')
                     is_converged = False
@@ -313,7 +324,7 @@ class TopologyOptimizer:
                 convergences_count = 0
             else:
                 convergences_count += 1
-                if convergences_count >= minimum_convergences:
+                if convergences_count > maximum_convergences:
                     logger.info('Reached minimum number of convergences [BREAK]')
                     is_converged = True
                     break
@@ -336,10 +347,6 @@ class TopologyOptimizer:
             # Weighted-average phasefield advance direction
             dp_arr = x_W * (-weight_W/math.sqrt(x_W.dot(x_W))) \
                    + x_R * (-weight_R/math.sqrt(x_R.dot(x_R)))
-
-            # Enforce phasefield lower and upper bounds
-            dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0
-            dp_arr[(p_arr == 1.0) & (dp_arr > 0.0)] = 0.0
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
 
@@ -520,7 +527,7 @@ class TopologyOptimizer:
 
 
 class DistanceSolver:
-    def __init__(self, V, viscosity=1e-2, penalty=1e4):
+    def __init__(self, V, viscosity=1e-2, penalty=1e5):
         '''
         Parameters
         ----------
@@ -557,7 +564,7 @@ class DistanceSolver:
         l0 = (x.max(0)-x.min(0)).min()
         he = mesh.hmax()
 
-        scaled_penalty = penalty/(l0*he)
+        scaled_penalty = penalty / he
         target_gradient = Constant(1.0)
 
         self._mf = dolfin.MeshFunction('size_t', mesh, mesh.geometric_dimension())
@@ -619,17 +626,20 @@ class DistanceSolver:
         try:
             self._solve_distance_problem()
         except RuntimeError:
-            logger.error('Could not solve distance problem with previous solution as '
-                         'initial solution. Attempting to re-initialize and re-solve.')
+            logger.error('Could not solve distance problem. '
+                         'Attempting to re-initialize and re-solve.')
+
             self._solve_initdist_problem()
+
             try:
                 self._solve_distance_problem()
             except RuntimeError:
-                raise RuntimeError('Could not solve distance problem on second attempt.')
+                logger.error('Unable to solve distance problem.')
+                raise
 
         x[:] = self._d_vec.get_local()
 
-    def compute_distance_function(self, p, alpha, init=True):
+    def compute_distance(self, p, alpha, init=True):
         '''Compute distance to thresholded phasefield boundary.'''
 
         if not self.mark_zero_distance_cells(p, alpha):

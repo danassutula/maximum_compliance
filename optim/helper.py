@@ -147,10 +147,11 @@ def solve_compliance_maximization_problem(
 
     '''
 
+    INITIAL_PHASEFIELD_DIFFUSION = 1e-4
     MINIMUM_STOP_REQUESTS_FOR_TRIGGERING_STOP = 3
 
     MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_CONVERGED = \
-        config.parameters_topology_solver['minimum_convergences'] + 2
+        config.parameters_topology_solver['maximum_convergences'] + 3
 
     MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_DIVERGED = \
         config.parameters_topology_solver['maximum_divergences'] + 3
@@ -174,7 +175,7 @@ def solve_compliance_maximization_problem(
     p_locals = make_defect_like_phasefield_array(
         V_p, defect_nucleation_centers, r=0.5*defect_nucleation_diameter)
 
-    apply_diffusive_smoothing(p_locals, kappa=1e-4)
+    apply_diffusive_smoothing(p_locals, kappa=INITIAL_PHASEFIELD_DIFFUSION)
     apply_interval_bounds(p_locals, lower=0.0, upper=1.0)
 
     optimizer = optim.TopologyOptimizer(W, R, F, C, u, p, p_locals, bcs_u,
@@ -199,8 +200,9 @@ def solve_compliance_maximization_problem(
                 phasefield_iteration_stepsize, phasefield_regularization_weight,
                 phasefield_collision_distance, phasefield_convergence_tolerance)
 
-        except RuntimeError:
+        except RuntimeError as exc:
 
+            logger.error(str(exc))
             logger.error('Solver failed for domain fraction '
                          f'{phasefield_fraction_i:.3f}')
 
@@ -225,9 +227,6 @@ def solve_compliance_maximization_problem(
           iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_DIVERGED:
             logger.info('Diverged within a threshold number of iterations')
             count_stop_requests += 1
-
-        else:
-            count_stop_requests = 0
 
         if count_stop_requests == MINIMUM_STOP_REQUESTS_FOR_TRIGGERING_STOP:
             logger.info('Reached threshold number of consecutive stop requests')
@@ -357,41 +356,36 @@ def meshgrid_uniform_with_margin(xlim, ylim, nrow, ncol):
     return meshgrid_uniform(xlim, ylim, nrow, ncol)
 
 
-def meshgrid_checker_asymmetric(xlim, ylim, nx, ny):
+def meshgrid_checker_symmetric(xlim, ylim, nrow, ncol):
+
+    if not nrow % 2:
+        raise ValueError('Require `nrow` to be odd.')
+
+    if not ncol % 2:
+        raise ValueError('Require `ncol` to be odd.')
 
     x0, x1 = xlim
     y0, y1 = ylim
 
-    nx_B = int(nx/2)
-    nx_A = nx - nx_B
+    dx = (x1 - x0) / (ncol - 1)
+    dy = (y1 - y0) / (nrow - 1)
 
-    ny_B = int(ny/2)
-    ny_A = ny - ny_B
+    xlim_a = xlim
+    ylim_a = ylim
 
-    assert nx_A >= nx_B
-    assert ny_A >= ny_B
+    xlim_b = [xlim[0]+dx, xlim[1]-dx]
+    ylim_b = [ylim[0]+dy, ylim[1]-dy]
 
-    dx = (x1 - x0) / (nx - 1)
-    dy = (y1 - y0) / (ny - 1)
+    nrow_b = (nrow-1)//2
+    ncol_b = (ncol-1)//2
 
-    if nx_A == nx_B:
-        xlim_A = (x0, x1-dx)
-        xlim_B = (x0+dx, x1)
-    else:
-        xlim_A = (x0, x1)
-        xlim_B = (x0+dx, x1-dx)
+    nrow_a = nrow_b + 1
+    ncol_a = ncol_b + 1
 
-    if ny_A == ny_B:
-        ylim_A = (y0, y1-dy)
-        ylim_B = (y0+dy, y1)
-    else:
-        ylim_A = (y0, y1)
-        ylim_B = (y0+dy, y1-dy)
+    xs_a = meshgrid_uniform(xlim_a, ylim_a, nrow_a, ncol_a)
+    xs_b = meshgrid_uniform(xlim_b, ylim_b, nrow_b, ncol_b)
 
-    grid_A = meshgrid_uniform(xlim_A, ylim_A, nx_A, ny_A)
-    grid_B = meshgrid_uniform(xlim_B, ylim_B, nx_B, ny_B)
-
-    return np.concatenate((grid_A, grid_B), axis=0)
+    return np.concatenate((xs_a, xs_b), axis=0)
 
 
 def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
@@ -418,3 +412,65 @@ def pertub_gridcols(xs, nrow, ncol, dy, colstep=2):
     xs[1::colstep,:] -= [0.0, dy/2]
 
     return xs.reshape((-1,2))
+
+
+def points_inside_rectangle(xs, xlim, ylim):
+
+    if not isinstance(xs, np.ndarray) or xs.ndim != 2:
+        raise TypeError('Parameter `xs` must be a 2D numpy array.')
+
+    if not hasattr(xlim, '__len__') or len(xlim) != 2:
+        raise TypeError('Parameter `xlim` must have length 2.')
+
+    if not hasattr(ylim, '__len__') or len(ylim) != 2:
+        raise TypeError('Parameter `ylim` must have length 2.')
+
+    mask = (xs[:,0] > xlim[0]) & \
+           (xs[:,0] < xlim[1]) & \
+           (xs[:,1] > ylim[0]) & \
+           (xs[:,1] < ylim[1])
+
+    return np.array(xs[mask])
+
+
+def make_parameter_combinations(*parameters):
+    '''Return all combinations of `parameters`.'''
+
+    if len(parameters) == 0:
+        return []
+    elif len(parameters) == 1:
+        y = parameters[0]
+        if not isinstance(y, list):
+            y = [y]
+        return y
+
+    y = parameters[-1]
+
+    if isinstance(y, list):
+        y = [(yi,) for yi in y]
+    else:
+        y = [(y,)]
+
+    def outer(x, y):
+
+        assert isinstance(y, list)
+        assert all(isinstance(yi, tuple) for yi in y)
+
+        if not isinstance(x, list):
+            x = [x]
+
+        nx = len(x)
+        ny = len(y)
+
+        X = []
+        Y = y * nx
+
+        for xi in x:
+            X += [xi]*ny
+
+        return [(Xi,)+Yi for Xi, Yi in zip(X, Y)]
+
+    for x in parameters[-2::-1]:
+        y = outer(x, y)
+
+    return y

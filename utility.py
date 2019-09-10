@@ -16,46 +16,6 @@ from dolfin import dx
 EPS = 1e-12
 
 
-def make_parameter_combinations(*parameters):
-    '''Return all combinations of `parameters`.'''
-
-    if len(parameters) == 0:
-        return []
-    elif len(parameters) == 1:
-        y = parameters[0]
-        if not isinstance(y, list):
-            y = [y]
-        return y
-
-    def outer(x, y):
-
-        if not isinstance(x, list):
-            x = [x]
-
-        nx = len(x)
-        ny = len(y)
-
-        X = []
-        Y = y * nx
-
-        for xi in x:
-            X += [xi]*ny
-
-        return [[Xi]+Yi for Xi, Yi in zip(X, Y)]
-
-    y = parameters[-1]
-
-    if isinstance(y, list):
-        y = [[yi] for yi in y]
-    else:
-        y = [[y]]
-
-    for x in parameters[-2::-1]:
-        y = outer(x, y)
-
-    return [[yi[j] for yi in y] for j in range(len(y[0]))]
-
-
 class PeriodicSolutionWriter:
 
     def __init__(self, outdir, u, p, writing_period=1,
