@@ -32,11 +32,11 @@ parameters_topology_solver = {
     'convergence_tolerance': 1e-3,
     'maximum_convergences': 3,
     'maximum_divergences': 3,
-    'maximum_iterations': 8000,
+    'maximum_iterations': 10000,
     }
 
 parameters_distance_solver = {
-    'alpha': 0.5, # Lower bound value defining the phasefield boundary
+    'alpha': 1/3, # Lower bound value defining the phasefield boundary
     'kappa': 0.1, # Stabilization for the boundary distance solution
     'gamma': 1e5, # Penalty that weakly enforces zero-distance BC's
     }

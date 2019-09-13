@@ -122,12 +122,16 @@ def material_integrity_model(p):
     '''
 
     # Minimum (residual) material integrity
-    rho_min = Constant(1e-6)
+    rho_min = Constant(1e-4)
 
-    # Material degradation exponent (`>1`)
-    beta = 2
+    # Material degradation exponent (`>=2`)
+    # beta = 2
+    beta = 3
+    # beta = 4
 
     return rho_min + (1.0-rho_min) * ((1.0+EPS)-p) ** beta
+
+    # return 1.0 - (3.0*p**2 - 2.0*p**3)
 
 
 if __name__ == "__main__":
@@ -165,12 +169,13 @@ if __name__ == "__main__":
           #       will be used but the value will be attained incrementally.
 
     defect_nucleation_centers = [
-        np.array([[0,0.50],[1,0.50],[0.50,0],[0.50,1]]),
-        np.array([[0,0.25],[1,0.75],[0.75,0],[0.25,1]]),
-        optim.helper.meshgrid_uniform([0,1], [0,1], 2, 2),
-        optim.helper.meshgrid_uniform([0,1], [0,1], 4, 4),
-        optim.helper.pertub_gridrows(optim.helper.meshgrid_uniform(
-            [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-3),
+        np.array([[0,0.50],[1,0.50]]),
+        # np.array([[0,0.50],[1,0.50],[0.50,0],[0.50,1]]),
+        # np.array([[0,0.25],[1,0.75],[0.75,0],[0.25,1]]),
+        # optim.helper.meshgrid_uniform([0,1], [0,1], 2, 2),
+        # optim.helper.meshgrid_uniform([0,1], [0,1], 4, 4),
+        # optim.helper.pertub_gridrows(optim.helper.meshgrid_uniform(
+        #     [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-3),
         ]
 
     phasefield_regularization_weight = [
@@ -178,16 +183,17 @@ if __name__ == "__main__":
         # 0.350,
         # 0.400,
         # 0.425,
-        0.450,
+        # 0.450,
         # 0.460,
-        # 0.475,
+        0.475,
+        # 0.5,
         ]
 
     defect_nucleation_diameter = "default" # or `None`, or "default"
-    defect_nucleation_elemental_diameter = 6.0 # Default fallback
+    defect_nucleation_elemental_diameter = 8.0 # Default fallback
 
     phasefield_collision_distance = "default" # or `None`, or "default"
-    phasefield_collision_elemental_distance = 6.0 # Default fallback
+    phasefield_collision_elemental_distance = 12.0 # Default fallback
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
@@ -199,10 +205,9 @@ if __name__ == "__main__":
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        # 0.040,
-        # 0.020,
-        0.010,
-        # 0.005,
+        # 0.050,
+        0.025,
+        # 0.010,
         ]
 
     # Phasefield convergence tolerance (L_inf-norm)
@@ -230,9 +235,9 @@ if __name__ == "__main__":
         # 40,
         # 41,
         # 60,
-        61,
+        # 61,
         # 80,
-        # 81,
+        81,
         # 121,
         # 160,
         # 161,

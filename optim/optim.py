@@ -348,6 +348,9 @@ class TopologyOptimizer:
             dp_arr = x_W * (-weight_W/math.sqrt(x_W.dot(x_W))) \
                    + x_R * (-weight_R/math.sqrt(x_R.dot(x_R)))
 
+            # dp_arr[(p_arr == 0.0) & (dp_arr < 0.0)] = 0.0
+            # dp_arr[(p_arr == 1.0) & (dp_arr > 0.0)] = 0.0
+
             dp_arr *= stepsize / np.abs(dp_arr).max()
 
             iterations_count += 1
