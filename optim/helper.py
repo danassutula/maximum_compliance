@@ -13,35 +13,112 @@ logger = config.logger
 EPS = 1e-12
 
 
-def project_material_fraction(expr, V, kappa=1e-5):
-    '''Project material fraction expression. Then, apply some smoothing,
-    and finally enforce the lower bound (0.0) and upper bound (1.0) values.
+class PeriodicExpression(dolfin.UserExpression):
+
+    def __new__(cls, func, *args, **kwargs):
+
+        if not isinstance(func, dolfin.Function):
+            raise TypeError('Parameter `func` must be a `dolfin.Function`')
+
+        if 'degree' not in kwargs and 'element' not in kwargs:
+            raise TypeError('Require `degree` or `element` as keyword argument')
+
+        self = super().__new__(cls)
+        self._ufl_shape = func.ufl_shape
+
+        return self
+
+    def __init__(self, func, xlim, ylim, nx, ny, mirror_x=False,
+                 mirror_y=False, overhang_fraction=0.0, **kwargs):
+
+        # Must initialize base class
+        super().__init__(**kwargs)
+
+        self._func = func
+
+        self.mirror_x = mirror_x
+        self.mirror_y = mirror_y
+
+        self._period_x = (xlim[1] - xlim[0]) / (nx-2*overhang_fraction)
+        self._period_y = (ylim[1] - ylim[0]) / (ny-2*overhang_fraction)
+
+        self._x0 = xlim[0] - self._period_x*overhang_fraction
+        self._y0 = ylim[0] - self._period_y*overhang_fraction
+
+        coord = func.function_space().mesh().coordinates()
+
+        x0_loc, y0_loc = coord.min(axis=0)
+        x1_loc, y1_loc = coord.max(axis=0)
+
+        self._x0_loc = x0_loc
+        self._y0_loc = y0_loc
+
+        self._scale_x = (x1_loc - x0_loc) / (self._period_x*(1.0+EPS))
+        self._scale_y = (y1_loc - y0_loc) / (self._period_y*(1.0+EPS))
+
+    def __repr__(self):
+        return f'<{self.__class__.__name__} at {hex(id(self))}>'
+
+    def eval(self, value, x):
+
+        y = x[1]
+        x = x[0]
+
+        num_periods_x = (x - self._x0) // self._period_x
+        num_periods_y = (y - self._y0) // self._period_y
+
+        if self.mirror_x and num_periods_x % 2:
+            # Mirror about y-axis
+            dx = ((self._x0 + (num_periods_x+1.0)*self._period_x) - x)
+        else:
+            dx = (x - (self._x0 + num_periods_x*self._period_x))
+
+        if self.mirror_y and num_periods_y % 2:
+            # Mirror about x-axis
+            dy = ((self._y0 + (num_periods_y+1.0)*self._period_y) - y)
+        else:
+            dy = (y - (self._y0 + num_periods_y*self._period_y))
+
+        x_loc = self._x0_loc + dx * self._scale_x
+        y_loc = self._y0_loc + dy * self._scale_y
+
+        value[:] = self._func(x_loc, y_loc)
+
+    def value_shape(self):
+        return self._ufl_shape
+
+
+def project_function_periodically(func, nx, ny, V,
+    mirror_x=False, mirror_y=False, overhang_fraction=0.0):
+    '''
 
     Parameters
     ----------
-    expr : dolfin.Expression-like
-        Scalar-valued expression that can be projected on `V`.
+    func : dolfin.Function
     V : dolfin.FunctionSpace
-        Scalar-valued function space.
 
     Returns
     -------
-    func : dolfin.Function
-        Projected expression for the material fraction.
+    dolfin.Function
 
     '''
 
-    if not hasattr(expr, 'ufl_shape') or expr.ufl_shape != ():
-        raise TypeError('Parameter `expr` must be a scalar-valued expression.')
+    if not isinstance(func, dolfin.Function):
+        raise TypeError('Parameter `func` must be a `dolfin.Function`')
 
     if not isinstance(V, dolfin.FunctionSpace):
-        raise TypeError('Parameter `V` must be a `dolfin.FunctionSpace`.')
+        raise TypeError('Parameter `V` must be a `dolfin.FunctionSpace`')
 
-    func = dolfin.project(expr, V)
-    apply_diffusive_smoothing(func, kappa)
-    apply_interval_bounds(func, 0.0, 1.0)
+    V_func = func.function_space()
+    coord = V_func.mesh().coordinates()
 
-    return func
+    x0, y0 = coord.min(axis=0)
+    x1, y1 = coord.max(axis=0)
+
+    expr = PeriodicExpression(func, [x0, x1], [y0, y1], nx, ny, mirror_x,
+        mirror_y, overhang_fraction, degree=V_func.ufl_element().degree())
+
+    return dolfin.project(expr, V)
 
 
 def compute_maximal_compressive_stress_field(stress_field):

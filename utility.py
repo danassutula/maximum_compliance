@@ -19,8 +19,7 @@ EPS = 1e-12
 class PeriodicSolutionWriter:
 
     def __init__(self, outdir, u, p, writing_period=1,
-        write_phasefield_pvd=True, write_displacements_pvd=False,
-        write_phasefield_npy=False, write_displacements_npy=False):
+        write_phasefield_pvd=True, write_displacements_pvd=False):
 
         if not isinstance(u, Function):
             raise TypeError('Parameter `u` must be a `dolfin.Function`.')
@@ -32,10 +31,7 @@ class PeriodicSolutionWriter:
             os.makedirs(outdir)
 
         self.write_phasefield_pvd = write_phasefield_pvd
-        self.write_phasefield_npy = write_phasefield_npy
-
         self.write_displacements_pvd = write_displacements_pvd
-        self.write_displacements_npy = write_displacements_npy
 
         self.u = u
         self.p = p
@@ -52,12 +48,6 @@ class PeriodicSolutionWriter:
 
         self.outfile_u = dolfin.File(os.path.join(outdir, 'u.pvd'))
         self.outfile_p = dolfin.File(os.path.join(outdir, 'p.pvd'))
-
-        prefix, extension = os.path.splitext(os.path.join(outdir, 'dofs_u.npy'))
-        self.outfilepath_u_dofs_format = (prefix + '{:04d}' + extension).format
-
-        prefix, extension = os.path.splitext(os.path.join(outdir, 'dofs_p.npy'))
-        self.outfilepath_p_dofs_format = (prefix + '{:04d}' + extension).format
 
     def periodic_write(self, calling_object=None):
 
@@ -82,14 +72,6 @@ class PeriodicSolutionWriter:
 
         if self.write_displacements_pvd or forcewrite_displacements:
             self.outfile_u << self.u
-
-        if self.write_phasefield_npy or forcewrite_phasefields:
-            np.save(self.outfilepath_p_dofs_format(self.index_write),
-                    self.p.vector().get_local())
-
-        if self.write_displacements_npy or forcewrite_displacements:
-            np.save(self.outfilepath_u_dofs_format(self.index_write),
-                    self.u.vector().get_local())
 
         self.count_calls += 1
         self.index_write += 1
@@ -126,14 +108,14 @@ def remove_outfiles(subdir, file_extensions):
 
 
 def unit_square_mesh(number_of_cells_along_edge,
-                     mesh_pattern="left/right",
+                     diagonal="left/right",
                      offset=(0.0,0.0), scale=1):
     '''
     Parameters
     ----------
     number_of_cells_along_edge: int
         Number of cells along edge.
-    mesh_pattern: str
+    diagonal: str
         Possible options: "left/right", "crossed", "left", or "right".
 
     '''
@@ -142,7 +124,7 @@ def unit_square_mesh(number_of_cells_along_edge,
         raise TypeError('Parameter `offset` must be a sequence of length `2`.')
 
     nx = ny = number_of_cells_along_edge
-    mesh = dolfin.UnitSquareMesh(nx, ny, diagonal=mesh_pattern)
+    mesh = dolfin.UnitSquareMesh(nx, ny, diagonal=diagonal)
 
     mesh.translate(dolfin.Point(*offset))
     mesh.scale(scale)

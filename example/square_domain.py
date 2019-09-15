@@ -36,75 +36,8 @@ if not os.path.isdir(RESULTS_OUTDIR_PARENT):
 SAFE_TO_REMOVE_FILE_TYPES = \
     ('.out', '.npy', '.pvd', '.vtu', '.png', '.svg', '.eps', '.pdf')
 
-
-def generate_defect_nucleation_centers(case):
-
-    slack = 1e-2
-
-
-    if case == 0:
-        # Diagonal pattern
-        defect_centers = np.array([[0.0, 0.0+slack],
-                                   [1.0, 1.0-slack]])
-
-    elif case == 1:
-        # 2-by-2
-        defect_centers = np.array([[0+slack,0+slack],
-                                   [1-slack,0+slack],
-                                   [1-slack,1-slack],
-                                   [0+slack,1-slack]])
-
-    elif case == 2:
-        # Spiral pattern
-        defect_centers = np.array([[0+slack,0],
-                                   [1,0+slack],
-                                   [1-slack,1],
-                                   [0,1-slack]])
-
-
-    elif case == 3:
-        # 2(squeezed)-by-2
-        defect_centers = np.array([[0,0+slack],
-                                   [1,0+slack],
-                                   [1,1-slack],
-                                   [0,1-slack]])
-
-    # elif case == 3:
-    #     # 2(squeezed)-by-3
-    #     defect_centers = np.array([[  0, 0+slack],[  1, 0+slack],
-    #                                [  1, 1-slack],[  0, 1-slack],
-    #                                [0.5, 0+slack],[0.5, 1-slack]])
-
-    elif case == 4:
-        # 8
-        defect_centers = np.array([[0+slack,0+slack],
-                                   [1-slack,0+slack],
-                                   [1-slack,1-slack],
-                                   [0+slack,1-slack],
-                                   [0.5+slack, 0.0+slack],
-                                   [1.0-slack, 0.5+slack],
-                                   [0.5-slack, 1.0-slack],
-                                   [0.0+slack,0.5-slack]])
-
-    # elif case == 5:
-    #     # 12
-    #     defect_centers = np.array([[0+slack,0+slack],
-    #                                [1-slack,0+slack],
-    #                                [1-slack,1-slack],
-    #                                [0+slack,1-slack],
-    #                                [0.25-slack, 0.0+slack],
-    #                                [0.75+slack, 0.0+slack],
-    #                                [1.0-slack, 0.25-slack],
-    #                                [1.0-slack, 0.75+slack],
-    #                                [0.25-slack, 1.0-slack],
-    #                                [0.75+slack, 1.0-slack],
-    #                                [0.0+slack,0.25-slack],
-    #                                [0.0+slack,0.75+slack]])
-
-    else:
-        raise ValueError('Parameter `case`?')
-
-    return defect_centers
+optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
+# optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'snes'
 
 
 def phasefield_regularization(p):
@@ -125,9 +58,9 @@ def material_integrity_model(p):
     rho_min = Constant(1e-4)
 
     # Material degradation exponent (`>=2`)
-    # beta = 2
+    # beta = 2 # Iteration progress is slow, reaches "fully-dagmed" level easily
     beta = 3
-    # beta = 4
+    # beta = 4 # Faster iteration progress but can not quite reach "fully-damage" level easily
 
     return rho_min + (1.0-rho_min) * ((1.0+EPS)-p) ** beta
 
@@ -143,12 +76,8 @@ if __name__ == "__main__":
     # (All last solutions will be written automatically)
 
     writing_period = 100
-
     write_phasefield_pvd = True
-    write_phasefield_npy = False
-
     write_displacements_pvd = False
-    write_displacements_npy = False
 
     ### Problem parameters
 
@@ -168,14 +97,13 @@ if __name__ == "__main__":
         ] # NOTE: If an element is a sequence, the end-value of the sequence
           #       will be used but the value will be attained incrementally.
 
+    slack = 0.0
     defect_nucleation_centers = [
-        np.array([[0,0.50],[1,0.50]]),
-        # np.array([[0,0.50],[1,0.50],[0.50,0],[0.50,1]]),
-        # np.array([[0,0.25],[1,0.75],[0.75,0],[0.25,1]]),
-        # optim.helper.meshgrid_uniform([0,1], [0,1], 2, 2),
+        np.array([[0,0.5-slack],[1,0.5+slack],[0.5+slack,0],[0.5-slack,1]]),
+        # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]), # Good
         # optim.helper.meshgrid_uniform([0,1], [0,1], 4, 4),
         # optim.helper.pertub_gridrows(optim.helper.meshgrid_uniform(
-        #     [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-3),
+        #     [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-2),
         ]
 
     phasefield_regularization_weight = [
@@ -192,14 +120,14 @@ if __name__ == "__main__":
     defect_nucleation_diameter = "default" # or `None`, or "default"
     defect_nucleation_elemental_diameter = 8.0 # Default fallback
 
-    phasefield_collision_distance = "default" # or `None`, or "default"
+    phasefield_collision_distance = 0.25 # `None`, or "default"
     phasefield_collision_elemental_distance = 12.0 # Default fallback
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
         # 0.02000,
-        0.01000,
-        # 0.00500,
+        # 0.01000,
+        0.00500,
         # 0.00250,
         ]
 
@@ -226,9 +154,9 @@ if __name__ == "__main__":
     # Phasefield function degree
     phasefield_degree = 1
 
-    # mesh_pattern = "left/right"
-    mesh_pattern = "crossed"
-    # mesh_pattern = "left"
+    # mesh_diagonal = "left/right"
+    mesh_diagonal = "crossed"
+    # mesh_diagonal = "left"
 
     number_of_elements_along_edge = [
         # 30,
@@ -237,10 +165,10 @@ if __name__ == "__main__":
         # 60,
         # 61,
         # 80,
-        81,
+        # 81,
         # 121,
         # 160,
-        # 161,
+        161,
         # 320,
         # 321,
         ] # NOTE: Should try both even and odd numbers of elements
@@ -296,7 +224,7 @@ if __name__ == "__main__":
         ### Discretization
 
         mesh = utility.unit_square_mesh(
-            number_of_elements_along_edge_i, mesh_pattern)
+            number_of_elements_along_edge_i, mesh_diagonal)
 
         mesh_x0, mesh_y0 = mesh.coordinates().min(axis=0)
         mesh_x1, mesh_y1 = mesh.coordinates().max(axis=0)
@@ -469,8 +397,8 @@ if __name__ == "__main__":
                 utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
 
                 solution_writer = utility.PeriodicSolutionWriter(
-                    results_outdir_functions, u, p, writing_period, write_phasefield_pvd,
-                    write_displacements_pvd, write_phasefield_npy, write_displacements_npy)
+                    results_outdir_functions, u, p, writing_period,
+                    write_phasefield_pvd, write_displacements_pvd)
 
             else:
                 solution_writer = type("DummySolutionWriter", (),
@@ -478,21 +406,6 @@ if __name__ == "__main__":
                          periodic_write=lambda calling_object : None))
 
             u.vector()[:] = undamaged_solution_vector
-
-            # ### TEST (BEGIN)
-            #
-            # plt.figure().add_subplot(111).add_patch(plt.Rectangle(
-            #     (0, 0), 1, 1, color='b', alpha=0.5))
-            #
-            # plt.scatter(defect_nucleation_centers_i[:,0],
-            #             defect_nucleation_centers_i[:,1], 10, 'r')
-            #
-            # plt.axis('equal')
-            # plt.show()
-            #
-            # import ipdb; ipdb.set_trace()
-            #
-            # ### TEST (END)
 
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
@@ -509,9 +422,8 @@ if __name__ == "__main__":
                     solution_writer.periodic_write,
                     )
 
-            # Limit maximum number of points to `2*1000`
             energy_vs_iterations = energy_vs_iterations[
-                ::max(1, int(len(energy_vs_iterations)/1000))]
+                ::max(1, int(len(energy_vs_iterations)/500))]
 
             normalized_energy_vs_iterations = [W_i / undamaged_potential_energy
                                                for W_i in energy_vs_iterations]
@@ -519,8 +431,9 @@ if __name__ == "__main__":
             normalized_energy_vs_phasefield = [W_i / undamaged_potential_energy
                                                for W_i in energy_vs_phasefield]
 
-            material_fraction = optim.helper \
-                .project_material_fraction(rho, V_p)
+            material_fraction = dolfin.project(rho, V_p)
+            optim.helper.apply_diffusive_smoothing(material_fraction, 1e-5)
+            optim.helper.apply_interval_bounds(material_fraction, 0.0, 1.0)
 
             stress_field = dolfin.project(pk2, V_T)
 
@@ -542,6 +455,10 @@ if __name__ == "__main__":
                 open(os.path.join(RESULTS_OUTDIR_PARENT, problem_title,
                     f'finished_normally({solver_iterations_failed==False}).out'),
                     mode='w').close()
+
+                np.save(os.path.join(results_outdir_functions,
+                    "material_fraction_dofs.npy"),
+                    material_fraction.vector().get_local())
 
                 dolfin.File(os.path.join(results_outdir_functions,
                     "material_fraction.pvd")) << material_fraction
@@ -628,5 +545,6 @@ if __name__ == "__main__":
 
             if logger.getEffectiveLevel() <= logging.INFO:
                 logger.info("Elapsed times:")
-                print('\t'+', '.join(("{}: {}",)*4).format(*sum(list(
-                    problem_elapsed_time_readable.items()), ())) + '\n')
+
+                tmp = ((v, k) for k, v in problem_elapsed_time_readable.items())
+                print('\t'+', '.join(("{} {}",)*4).format(*sum(tmp, ())) + '\n')
