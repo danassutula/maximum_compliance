@@ -40,12 +40,11 @@ optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
 # optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'snes'
 
 
-def phasefield_regularization(p):
-    '''Phasefield regularization.'''
+def phasefield_sharpness(p):
     return dolfin.grad(p)**2
 
 
-def material_integrity_model(p):
+def material_integrity(p, rho_min=1e-5):
     '''Material integrity given the value of phasefield.
 
     Notes
@@ -53,9 +52,6 @@ def material_integrity_model(p):
     The returned value should be in range [rho_min, 1].
 
     '''
-
-    # Minimum (residual) material integrity
-    rho_min = Constant(1e-4)
 
     # Material degradation exponent (`>=2`)
     # beta = 2 # Iteration progress is slow, reaches "fully-dagmed" level easily
@@ -97,13 +93,11 @@ if __name__ == "__main__":
         ] # NOTE: If an element is a sequence, the end-value of the sequence
           #       will be used but the value will be attained incrementally.
 
-    slack = 0.0
+    slack = 0.2
     defect_nucleation_centers = [
-        np.array([[0,0.5-slack],[1,0.5+slack],[0.5+slack,0],[0.5-slack,1]]),
-        # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]), # Good
-        # optim.helper.meshgrid_uniform([0,1], [0,1], 4, 4),
-        # optim.helper.pertub_gridrows(optim.helper.meshgrid_uniform(
-        #     [0,1], [0,1], nrow=6, ncol=6), nrow=6, ncol=6, dx=1e-2),
+        # np.array([[0,0],[1,1]]),
+        np.array([[slack,0],[1-slack,1]]),
+        # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]),
         ]
 
     phasefield_regularization_weight = [
@@ -113,22 +107,22 @@ if __name__ == "__main__":
         # 0.425,
         # 0.450,
         # 0.460,
-        0.475,
-        # 0.5,
+        # 0.475,
+        0.500,
         ]
 
     defect_nucleation_diameter = "default" # or `None`, or "default"
-    defect_nucleation_elemental_diameter = 8.0 # Default fallback
+    defect_nucleation_elemental_diameter = 10.0 # Default fallback
 
-    phasefield_collision_distance = 0.25 # `None`, or "default"
+    phasefield_collision_distance = 0.2 # `None`, or "default"
     phasefield_collision_elemental_distance = 12.0 # Default fallback
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
         # 0.02000,
         # 0.01000,
-        0.00500,
-        # 0.00250,
+        # 0.00500,
+        0.00250,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
@@ -149,7 +143,7 @@ if __name__ == "__main__":
     ### Discretization parameters
 
     # Displacement function degree
-    displacement_degree = 1 # 1, 2
+    displacement_degree = 1
 
     # Phasefield function degree
     phasefield_degree = 1
@@ -304,8 +298,8 @@ if __name__ == "__main__":
         pk1_0 = material_model.stress_measure_pk1()
         pk2_0 = material_model.stress_measure_pk2()
 
-        rho = material_integrity_model(p)
-        phi = phasefield_regularization(p)
+        rho = material_integrity(p)
+        phi = phasefield_sharpness(p)
 
         psi = rho * psi_0
         pk1 = rho * pk1_0
@@ -445,7 +439,6 @@ if __name__ == "__main__":
 
             stress_field.rename('stress_tensor', '')
             material_fraction.rename('material_fraction', '')
-
             maximal_compressive_stress_field.rename('maximal_compression', '')
             fraction_compressive_stress_field.rename('fraction_compression', '')
 
@@ -455,10 +448,6 @@ if __name__ == "__main__":
                 open(os.path.join(RESULTS_OUTDIR_PARENT, problem_title,
                     f'finished_normally({solver_iterations_failed==False}).out'),
                     mode='w').close()
-
-                np.save(os.path.join(results_outdir_functions,
-                    "material_fraction_dofs.npy"),
-                    material_fraction.vector().get_local())
 
                 dolfin.File(os.path.join(results_outdir_functions,
                     "material_fraction.pvd")) << material_fraction

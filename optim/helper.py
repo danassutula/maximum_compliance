@@ -319,49 +319,49 @@ def solve_compliance_maximization_problem(
            optimizer, p_locals, p_mean_target
 
 
-def apply_diffusive_smoothing(ps, kappa=1e-4):
+def apply_diffusive_smoothing(fn, kappa=1e-4):
 
-    if isinstance(ps, (list, tuple)):
+    if isinstance(fn, (list, tuple)):
         return_as_sequence = True
     else:
         return_as_sequence = False
-        ps = (ps,)
+        fn = (fn,)
 
-    if not all(isinstance(p_i, dolfin.Function) for p_i in ps):
-        raise TypeError('Parameter `ps` must either be a `dolfin.Function` '
+    if not all(isinstance(fn_i, dolfin.Function) for fn_i in fn):
+        raise TypeError('Parameter `fn` must either be a `dolfin.Function` '
                         'or a sequence (list, tuple) of `dolfin.Function`s.')
 
     diffusion_filter = filter.DiffusionFilter(
-        ps[0].function_space(), kappa)
+        fn[0].function_space(), kappa)
 
-    for p_i in ps:
-        diffusion_filter.apply(p_i)
+    for fn_i in fn:
+        diffusion_filter.apply(fn_i)
 
-    return ps if return_as_sequence else ps[0]
+    return fn if return_as_sequence else fn[0]
 
 
-def apply_interval_bounds(ps, lower=0.0, upper=1.0):
+def apply_interval_bounds(fn, lower=0.0, upper=1.0):
 
-    if isinstance(ps, (list, tuple)):
+    if isinstance(fn, (list, tuple)):
         return_as_sequence = True
     else:
         return_as_sequence = False
-        ps = (ps,)
+        fn = (fn,)
 
-    if not all(isinstance(p_i, dolfin.Function) for p_i in ps):
-        raise TypeError('Parameter `ps` must either be a `dolfin.Function` '
+    if not all(isinstance(fn_i, dolfin.Function) for fn_i in fn):
+        raise TypeError('Parameter `fn` must either be a `dolfin.Function` '
                         'or a sequence (list, tuple) of `dolfin.Function`s.')
 
-    for p_i in ps:
+    for fn_i in fn:
 
-        x = p_i.vector().get_local()
+        x = fn_i.vector().get_local()
 
         x[x < lower] = lower
         x[x > upper] = upper
 
-        p_i.vector().set_local(x)
+        fn_i.vector().set_local(x)
 
-    return ps if return_as_sequence else ps[0]
+    return fn if return_as_sequence else fn[0]
 
 
 def make_defect_like_phasefield(V, xc, r):

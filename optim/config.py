@@ -37,7 +37,7 @@ parameters_topology_solver = {
 
 parameters_distance_solver = {
     'alpha': 1/3, # Lower bound value defining the phasefield boundary
-    'kappa': 5e-2, # Stabilization for the boundary distance solution
+    'kappa': 1e-3, # Stabilization for the boundary distance solution
     'gamma': 1e5, # Penalty that weakly enforces zero-distance BC's
     }
 

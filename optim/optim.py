@@ -637,8 +637,10 @@ class DistanceSolver:
             try:
                 self._solve_distance_problem()
             except RuntimeError:
-                logger.error('Unable to solve distance problem.')
-                raise
+                logger.error('Unable to solve distance problem. '
+                             'Reusing the previous distance solution.')
+
+                return
 
         x[:] = self._d_vec.get_local()
 

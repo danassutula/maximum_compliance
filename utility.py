@@ -48,6 +48,7 @@ class PeriodicSolutionWriter:
 
         self.outfile_u = dolfin.File(os.path.join(outdir, 'u.pvd'))
         self.outfile_p = dolfin.File(os.path.join(outdir, 'p.pvd'))
+        self.fmtstr_outfile = os.path.join(outdir, '{:s}{:06d}{:s}')
 
     def periodic_write(self, calling_object=None):
 
@@ -66,6 +67,9 @@ class PeriodicSolutionWriter:
 
         self.mean_phasefield_values.append(
             assemble(self._ufl_form_p_mean))
+
+        np.save(self.fmtstr_outfile.format("p", self.index_write, ".npy"),
+                self.p.vector().get_local())
 
         if self.write_phasefield_pvd or forcewrite_phasefields:
             self.outfile_p << self.p
