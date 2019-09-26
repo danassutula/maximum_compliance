@@ -102,9 +102,6 @@ class TopologyOptimizer:
 
         self._initialize_local_phasefields(p_locals)
 
-        self._domain_integral_dof_weights = \
-            assemble(dolfin.TestFunction(self._V_p)*dx).get_local()
-
         self._J = J
         self._P = P
 
@@ -170,7 +167,7 @@ class TopologyOptimizer:
         self._solve_phasefield_distances() # -> self._d_arr_locals (correct solution)
 
         if len(p_locals) == 1:
-            self._apply_collision_prevention = lambda p_arr : None
+            self._apply_collision_constraints = lambda p_arr : None
 
 
     def optimize(self, stepsize, penalty_weight, collision_distance,
@@ -227,24 +224,6 @@ class TopologyOptimizer:
            (self._d_arr_locals[:,0] == np.inf).all():
             raise RuntimeError('Ill-defined phasefields.')
 
-        def compute_phasefield_increment():
-
-            x_J = assemble(self._dJdp).get_local()
-            x_P = assemble(self._dPdp).get_local()
-
-            # Orthogonalize with respect to (orthogonal) constraints
-            for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
-                x_J -= dp_C_i * (x_J.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
-                x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
-
-            # Weighted-average phasefield advance direction
-            dp_arr = x_J * (-weight_J/math.sqrt(x_J.dot(x_J))) \
-                   + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
-
-            dp_arr *= stepsize / np.abs(dp_arr).max()
-
-            return dp_arr
-
         weight_P = penalty_weight
         weight_J = 1.0 - weight_P
 
@@ -254,39 +233,23 @@ class TopologyOptimizer:
 
         self._collision_distance = collision_distance
         p_arr = sum(self._p_vec_locals).get_local()
+        dp_arr = 0.0 # np.zeros_like(p_arr)
 
-        self._solve_phasefield_distances()
         self._apply_phasefield_constraints(p_arr)
         self._assign_phasefield_values(p_arr)
 
-        self._solve_phasefield_distances()
-        self._apply_collision_prevention(p_arr)
-        self._apply_phasefield_constraints(p_arr)
-        self._assign_phasefield_values(p_arr)
-
-        self._solve_equilibrium_problem()
-
-        J_min = assemble(self._J)
-        cost_values = [J_min,]
-
-        # convergence_tolerance *= abs(J_min)
-        # convergence_factor = 1.0 - convergence_tolerance
-
-        # cost_values = []
-        # J_min = np.inf
+        J_min = np.inf
+        cost_values = []
 
         while True:
 
-            iterations_count += 1
-
-            dp_arr = compute_phasefield_increment()
-            p_arr_prv = p_arr; p_arr = p_arr + dp_arr
+            p_arr_prv = p_arr
+            p_arr = p_arr + dp_arr
 
             self._solve_phasefield_distances()
-            self._apply_collision_prevention(p_arr)
+            self._apply_collision_constraints(p_arr)
             self._apply_phasefield_constraints(p_arr)
             self._assign_phasefield_values(p_arr)
-
             self._solve_equilibrium_problem()
 
             ### Report iteration
@@ -295,25 +258,19 @@ class TopologyOptimizer:
             cost_values.append(J_cur)
 
             dp_arr = p_arr - p_arr_prv
-            abs_dp_arr = np.abs(dp_arr)
-            max_dp_arr = abs_dp_arr.max()
-
-            normL1_dp = self._domain_integral_dof_weights.dot(abs_dp_arr)
+            norm_dp = np.abs(dp_arr).max()
 
             logger.info(
                 f'k:{iterations_count:3d}, '
                 f'J:{J_cur: 11.5e}, '
-                f'|dp|_inf:{max_dp_arr: 8.2e}, '
-                f'|dp|_1:{normL1_dp: 8.2e}'
+                f'|dp|_inf:{norm_dp: 8.2e}'
                 )
 
             self.function_to_call_during_iterations(self)
 
             ### Assess convergence
 
-            # if J_min - J_cur > convergence_tolerance:
-            # if J_cur < J_min * convergence_factor:
-            if J_min - J_cur > convergence_tolerance * abs(J_cur) * normL1_dp:
+            if J_min - J_cur > abs(J_cur) * convergence_tolerance:
 
                 J_min = J_cur
 
@@ -333,6 +290,24 @@ class TopologyOptimizer:
             if iterations_count >= maximum_iterations:
                 logger.warning('Reached maximum number of iterations')
                 break
+
+            ### Estimate phasefield increment
+
+            x_J = assemble(self._dJdp).get_local()
+            x_P = assemble(self._dPdp).get_local()
+
+            # Orthogonalize with respect to (orthogonal) constraints
+            for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
+                x_J -= dp_C_i * (x_J.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+
+            # Weighted-average phasefield advance direction
+            dp_arr = x_J * (-weight_J/math.sqrt(x_J.dot(x_J))) \
+                   + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
+
+            dp_arr *= stepsize / np.abs(dp_arr).max()
+
+            iterations_count += 1
 
         return iterations_count, cost_values
 
@@ -365,7 +340,7 @@ class TopologyOptimizer:
                 d_arr_i[:] = np.inf
 
 
-    def _apply_collision_prevention(self, p_arr):
+    def _apply_collision_constraints(self, p_arr):
 
         # NOTE: The "distance" needs to be defined as the second smallest distance
         # because the smallest value just is a reference to a particular phasefield.

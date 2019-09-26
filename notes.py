@@ -1,11 +1,11 @@
 
 
 
-            normL1_dp = self._domain_integral_dof_weights.dot(abs_dp_arr)
+normL1_dp = self._domain_integral_dof_weights.dot(abs_dp_arr)
 
 
-        self._domain_integral_dof_weights = \
-            assemble(dolfin.TestFunction(self._V_p)*dx).get_local()
+self._domain_integral_dof_weights = \
+    assemble(dolfin.TestFunction(self._V_p)*dx).get_local()
 
         # collision_distance_hard : float
         #     Minimum distance between local phasefields excluding blending branch.

@@ -95,7 +95,9 @@ if __name__ == "__main__":
 
     slack = 1e-2
     defect_nucleation_centers = [
-        # np.array([[0,0],[1,1]]),
+        # np.array([[0,0]]), # Only for benchmarking
+        # np.array([[0,0],[1,1]]), # Only for benchmarking
+        # np.array([[0.25,0.5],[0.75,0.5]]), # Only for benchmarking
         np.array([[0.25,0],[0.75,1]]),
         # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]),
         ]
@@ -103,10 +105,10 @@ if __name__ == "__main__":
     phasefield_penalty_weight = [
         # 0.300,
         # 0.400,
-        0.425,
+        # 0.425,
         # 0.450,
-        # 0.475,
-        # 0.500,
+        0.475,
+        # 0.485,
         ]
 
     defect_nucleation_diameter = "default" # or `None`, or "default"
