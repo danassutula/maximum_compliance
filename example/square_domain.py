@@ -40,7 +40,7 @@ optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
 # optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'snes'
 
 
-def phasefield_sharpness(p):
+def phasefield_penalty(p):
     return dolfin.grad(p)**2
 
 
@@ -78,8 +78,8 @@ if __name__ == "__main__":
     ### Problem parameters
 
     load_type = [
-        "biaxial_uniform",
         # "uniaxial_uniform",
+        "biaxial_uniform",
         ]
 
     material_model_name = [
@@ -93,36 +93,34 @@ if __name__ == "__main__":
         ] # NOTE: If an element is a sequence, the end-value of the sequence
           #       will be used but the value will be attained incrementally.
 
-    slack = 0.2
+    slack = 1e-2
     defect_nucleation_centers = [
         # np.array([[0,0],[1,1]]),
-        np.array([[slack,0],[1-slack,1]]),
+        np.array([[0.25,0],[0.75,1]]),
         # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]),
         ]
 
-    phasefield_regularization_weight = [
+    phasefield_penalty_weight = [
         # 0.300,
-        # 0.350,
         # 0.400,
-        # 0.425,
+        0.425,
         # 0.450,
-        # 0.460,
         # 0.475,
-        0.500,
+        # 0.500,
         ]
 
     defect_nucleation_diameter = "default" # or `None`, or "default"
     defect_nucleation_elemental_diameter = 10.0 # Default fallback
 
-    phasefield_collision_distance = 0.2 # `None`, or "default"
+    phasefield_collision_distance = 0.05 # `None`, or "default"
     phasefield_collision_elemental_distance = 12.0 # Default fallback
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
-        # 0.02000,
-        # 0.01000,
-        # 0.00500,
-        0.00250,
+        # 0.020,
+        0.010,
+        # 0.005,
+        # 0.002,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
@@ -131,9 +129,6 @@ if __name__ == "__main__":
         0.025,
         # 0.010,
         ]
-
-    # Phasefield convergence tolerance (L_inf-norm)
-    phasefield_convergence_stepsize_fraction = 1/3
 
     phasefield_maximum_domain_fraction = 1.0
 
@@ -160,26 +155,26 @@ if __name__ == "__main__":
         # 61,
         # 80,
         # 81,
-        # 121,
+        121,
         # 160,
-        161,
+        # 161,
         # 320,
         # 321,
         ] # NOTE: Should try both even and odd numbers of elements
 
     ### Input control parameters (if not defined above)
 
+    if phasefield_penalty_weight is None or not phasefield_penalty_weight:
+        phasefield_penalty_weight = eval(input('\nphasefield_penalty_weight:\n'))
+
     if boundary_displacement_value is None or not boundary_displacement_value:
         boundary_displacement_value = eval(input('\nboundary_displacement_value:\n'))
 
-    if phasefield_regularization_weight is None or not phasefield_regularization_weight:
-        phasefield_regularization_weight = eval(input('\nphasefield_regularization_weight:\n'))
+    if phasefield_iteration_stepsize is None or not phasefield_iteration_stepsize:
+        phasefield_iteration_stepsize = eval(input('\nphasefield_iteration_stepsize:\n'))
 
     if phasefield_fraction_increment is None or not phasefield_fraction_increment:
         phasefield_fraction_increment = eval(input('\nphasefield_fraction_increment:\n'))
-
-    if phasefield_iteration_stepsize is None or not phasefield_iteration_stepsize:
-        phasefield_iteration_stepsize = eval(input('\nphasefield_iteration_stepsize:\n'))
 
     if number_of_elements_along_edge is None or not number_of_elements_along_edge:
         number_of_elements_along_edge = eval(input('\nnumber_of_elements_along_edge:\n'))
@@ -197,13 +192,13 @@ if __name__ == "__main__":
     outer_loop_parameters = optim.helper.make_parameter_combinations(
         load_type,
         material_model_name,
-        number_of_elements_along_edge,
         boundary_displacement_value,
+        number_of_elements_along_edge,
         )
 
     inner_loop_parameters = optim.helper.make_parameter_combinations(
         defect_nucleation_centers,
-        phasefield_regularization_weight,
+        phasefield_penalty_weight,
         phasefield_fraction_increment,
         phasefield_iteration_stepsize,
         )
@@ -211,8 +206,8 @@ if __name__ == "__main__":
     for (
         load_type_i,
         material_model_name_i,
-        number_of_elements_along_edge_i,
         boundary_displacement_value_i,
+        number_of_elements_along_edge_i,
         ) in outer_loop_parameters:
 
         ### Discretization
@@ -299,7 +294,7 @@ if __name__ == "__main__":
         pk2_0 = material_model.stress_measure_pk2()
 
         rho = material_integrity(p)
-        phi = phasefield_sharpness(p)
+        phi = phasefield_penalty(p)
 
         psi = rho * psi_0
         pk1 = rho * pk1_0
@@ -311,7 +306,7 @@ if __name__ == "__main__":
         W = psi * dx
 
         # Phasefield regularization
-        R = phi * dx
+        P = phi * dx
 
         # Variational form of equilibrium
         F = derivative(W, u)
@@ -335,7 +330,7 @@ if __name__ == "__main__":
 
         for (
             defect_nucleation_centers_i,
-            phasefield_regularization_weight_i,
+            phasefield_penalty_weight_i,
             phasefield_fraction_increment_i,
             phasefield_iteration_stepsize_i,
             ) in inner_loop_parameters:
@@ -356,9 +351,6 @@ if __name__ == "__main__":
                 phasefield_collision_distance_i = \
                     phasefield_collision_elemental_distance * mesh.hmax() * (1+EPS)
 
-            phasefield_convergence_tolerance_i = \
-                phasefield_iteration_stepsize_i * phasefield_convergence_stepsize_fraction
-
             problem_title = (
                 f"date({time.strftime('%m%d_%H%M')})-"
                 f"load({load_type_i})-"
@@ -366,7 +358,7 @@ if __name__ == "__main__":
                 f"mesh({mesh.num_vertices()})-"
                 f"count({len(defect_nucleation_centers_i)})-"
                 f"disp({str(f'{boundary_displacement_value_i:.3f}').replace('.','d')})-"
-                f"regul({str(f'{phasefield_regularization_weight_i:.3f}').replace('.','d')})-"
+                f"regul({str(f'{phasefield_penalty_weight_i:.3f}').replace('.','d')})-"
                 f"inc({str(f'{phasefield_fraction_increment_i:.3f}').replace('.','d')})-"
                 f"step({str(f'{phasefield_iteration_stepsize_i:.3f}').replace('.','d')})"
                 )
@@ -404,20 +396,19 @@ if __name__ == "__main__":
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
                 optim.helper.solve_compliance_maximization_problem(
-                    W, R, u, p, bcs,
+                    W, P, u, p, bcs,
                     defect_nucleation_centers_i,
                     defect_nucleation_diameter_i,
+                    phasefield_penalty_weight_i,
                     phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
-                    phasefield_regularization_weight_i,
-                    phasefield_convergence_tolerance_i,
                     phasefield_maximum_domain_fraction,
                     solution_writer.periodic_write,
                     )
 
             energy_vs_iterations = energy_vs_iterations[
-                ::max(1, int(len(energy_vs_iterations)/500))]
+                ::max(1, int(len(energy_vs_iterations)/1000))]
 
             normalized_energy_vs_iterations = [W_i / undamaged_potential_energy
                                                for W_i in energy_vs_iterations]

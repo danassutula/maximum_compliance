@@ -1,27 +1,3 @@
-'''
-
-optim/config.py
-
-Notes
------
-
-Some explanations of parameters.
-
-parameters_distance_solver['alpha']:
-    Threshold-like parameter. Phasefield value greater than `phasefield_alpha`
-    marks the subdomain whose boundary is considered to be the "phasefield
-    boundary". This boundary (and the interior domain) is marked as zero-
-    distance to the phasefield.
-
-parameters_distance_solver['kappa']:
-    Diffusion-like parameter (>0.0) used to regularize the distance equation
-    so that the phasefield distance problem can be solved uniquely.
-
-parameters_distance_solver['gamma']:
-    Penalty-like parameter that serves to weaky impose the Dirichlet BC's
-    in the phasefield distance problem.
-
-'''
 
 import logging
 
@@ -30,15 +6,14 @@ logger = logging.getLogger()
 
 parameters_topology_solver = {
     'convergence_tolerance': 1e-3,
-    'maximum_convergences': 3,
-    'maximum_divergences': 3,
+    'minimum_convergences': 3,
     'maximum_iterations': 10000,
     }
 
 parameters_distance_solver = {
-    'alpha': 1/3, # Lower bound value defining the phasefield boundary
-    'kappa': 1e-3, # Stabilization for the boundary distance solution
-    'gamma': 1e5, # Penalty that weakly enforces zero-distance BC's
+    'threshold': 1/3, # Lower bound value defining the phasefield boundary
+    'viscosity': 1e-2, # Stabilization for the boundary distance solution
+    'penalty': 1e5, # Penalty that weakly enforces zero-distance BC's
     }
 
 parameters_nonlinear_solver = {

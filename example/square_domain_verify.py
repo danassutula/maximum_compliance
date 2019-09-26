@@ -35,9 +35,14 @@ plt.close('all')
 # filename = "/Users/danas.sutula/Documents/Programs/Python/compliance_maximization/results/square_domain/date(0917_1212)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(7565)-count(4)-disp(0d100)-regul(0d475)-inc(0d003)-step(0d025)/functions/p000038.npy"
 # filename = "/Users/danas.sutula/Documents/Programs/Python/compliance_maximization/results_ktt/square_domain/date(0917_1733)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(7565)-count(2)-disp(0d100)-regul(0d475)-inc(0d003)-step(0d025)/functions/p000082.npy"
 
-filename = ""
+# filename = "/Users/danas.sutula/Documents/Programs/Python/compliance_maximization/results_ktt/square_domain/date(0919_0851)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000046.npy"
 
-require_displacement_solution = False
+# filename = "/Users/danas.sutula/Documents/Programs/Python/compliance_maximization/results_ktt/square_domain/date(0919_1438)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000047.npy"
+# filename = "results_ktt/square_domain/date(0920_0742)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000033.npy"
+filename = "results_ktt/square_domain/date(0920_1430)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000068.npy"
+
+require_displacement_solution = True
+using_material_density_instead_of_phasefield = True
 
 num_elements_x = 161
 num_elements_y = num_elements_x
@@ -54,12 +59,15 @@ V_unitcell = dolfin.FunctionSpace(mesh_unitcell, element_family, element_degree)
 p_unitcell = dolfin.Function(V_unitcell)
 p_unitcell.vector()[:] = np.load(filename)
 
-m_unitcell = dolfin.project(material_integrity(
-    p_unitcell, minimum_material_integrity), V_unitcell)
+if using_material_density_instead_of_phasefield:
+    m_unitcell = dolfin.project(material_integrity(
+        p_unitcell, minimum_material_integrity), V_unitcell)
+else:
+    m_unitcell = p_unitcell
 
 
-num_unticells_x = 8
-num_unitcells_y = 8
+num_unticells_x = 3
+num_unitcells_y = 3
 
 mirror_x = True
 mirror_y = True
@@ -67,7 +75,7 @@ mirror_y = True
 overhang_fraction = 0.10
 
 extension_final = 1.000
-extension_initial = 0.02
+extension_initial = 1.000
 extension_stepsize = 0.01
 maximum_refinements = 2
 
@@ -102,8 +110,8 @@ bcs = [
     dolfin.DirichletBC(V_u.sub(1),   0, "x[1] < DOLFIN_EPS", method="pointwise"),
     ]
 
-# psi = material.LinearElasticModel(material_parameters, u).strain_energy_density()
-psi = material.NeoHookeanModel(material_parameters, u).strain_energy_density()
+psi = material.LinearElasticModel(material_parameters, u).strain_energy_density()
+# psi = material.NeoHookeanModel(material_parameters, u).strain_energy_density()
 
 W = m * psi * dolfin.dx
 F = dolfin.derivative(W, u)
@@ -141,7 +149,7 @@ def solve_displacement_problem_incrementally(
     value_current = value_initial
     u_arr_old = u.vector().get_local()
 
-    while value_current < value_maximum:
+    while value_current <= value_maximum:
         print(f"INFO: Solving for {value_current:.3f} ...")
 
         if solve_displacement_problem(value_current):
@@ -169,10 +177,10 @@ if __name__ == "__main__":
         solve_displacement_problem_incrementally(extension_initial,
             extension_final, extension_stepsize, maximum_refinements)
 
-        dolfin.File("u.pvd") << u
+        # dolfin.File("u.pvd") << u
 
-    dolfin.File("m_unitcell.pvd") << m_unitcell
-    dolfin.File("m.pvd") << m
+    # dolfin.File("m_unitcell.pvd") << m_unitcell
+    # dolfin.File("m.pvd") << m
 
     plt.figure("Phasefield (unit-cell)")
     dolfin.plot(m_unitcell)

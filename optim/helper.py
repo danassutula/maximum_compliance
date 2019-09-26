@@ -198,40 +198,37 @@ def compute_fraction_compressive_stress_field(stress_field):
 
 
 def solve_compliance_maximization_problem(
-    W, R, u, p, bcs_u,
+    W, P, u, p, bcs_u,
     defect_nucleation_centers,
     defect_nucleation_diameter,
+    phasefield_penalty_weight,
     phasefield_collision_distance,
     phasefield_iteration_stepsize=1e-2,
     phasefield_fraction_increment=1e-2,
-    phasefield_regularization_weight=0.450,
-    phasefield_convergence_tolerance=None,
     phasefield_maximum_domain_fraction=1.0,
     iteration_state_recording_function=None):
     '''
     Parameters
     ----------
     W : dolfin.Form
-        Potential energy of a hyperelastic solid, W(u(p), p).
-    R : dolfin.Form
-        Phasefield regularization, R(p).
+        Energy (`W(u(p), p)`) to be minimized.
+    P : dolfin.Form
+        Phasefield penalty (`P(p)`) to be minimized.
     u : dolfin.Function
         Displacement function or a mixed function.
     p : dolfin.Function
         Phasefield function (scalar-valued).
-    bcs_u : (list of) dolfin.DirichletBC(s), or None, or empty list
+    bcs_u : (list of) dolfin.DirichletBC(s), or None, or an empty list
         Sequence of Dirichlet boundary conditions for `u`.
 
     '''
 
     INITIAL_PHASEFIELD_DIFFUSION = 1e-4
-    MINIMUM_STOP_REQUESTS_FOR_TRIGGERING_STOP = 3
 
-    MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_CONVERGED = \
-        config.parameters_topology_solver['maximum_convergences'] + 3
+    MINIMUM_STOP_REQUESTS_FOR_TERMINATION = 3
 
-    MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_DIVERGED = \
-        config.parameters_topology_solver['maximum_divergences'] + 3
+    MINIMUM_ITERATIONS_FOR_REQUESTING_STOP = \
+        config.parameters_topology_solver['minimum_convergences'] + 3
 
     energy_vs_iterations = []
     energy_vs_phasefield = []
@@ -255,7 +252,7 @@ def solve_compliance_maximization_problem(
     apply_diffusive_smoothing(p_locals, kappa=INITIAL_PHASEFIELD_DIFFUSION)
     apply_interval_bounds(p_locals, lower=0.0, upper=1.0)
 
-    optimizer = optim.TopologyOptimizer(W, R, F, C, u, p, p_locals, bcs_u,
+    optimizer = optim.TopologyOptimizer(W, P, F, C, u, p, p_locals, bcs_u,
         function_to_call_during_iterations=iteration_state_recording_function)
 
     phasefield_fraction_i = dolfin.assemble(sum(p_locals)*dolfin.dx(mesh)) \
@@ -264,55 +261,54 @@ def solve_compliance_maximization_problem(
     iterations_failed = False
     count_stop_requests = 0
 
-    while phasefield_fraction_i < phasefield_maximum_domain_fraction:
+    try:
 
-        try:
+        while phasefield_fraction_i < phasefield_maximum_domain_fraction:
 
-            logger.info('Solving for phasefield domain fraction '
-                        f'{phasefield_fraction_i:.3f}')
+            try:
 
-            p_mean_target.assign(phasefield_fraction_i)
+                logger.info('Solving for phasefield domain fraction '
+                            f'{phasefield_fraction_i:.3f}')
 
-            iterations_i, converged_i, energy_vs_iterations_i = optimizer.optimize(
-                phasefield_iteration_stepsize, phasefield_regularization_weight,
-                phasefield_collision_distance, phasefield_convergence_tolerance)
+                p_mean_target.assign(phasefield_fraction_i)
 
-        except RuntimeError as exc:
+                iterations_i, energy_vs_iterations_i = optimizer.optimize(
+                    phasefield_iteration_stepsize, phasefield_penalty_weight,
+                    phasefield_collision_distance)
 
-            logger.error(str(exc))
-            logger.error('Solver failed for domain fraction '
-                         f'{phasefield_fraction_i:.3f}')
+            except RuntimeError as exc:
 
-            iterations_failed = True
+                logger.error(str(exc))
+                logger.error('Solver failed for domain fraction '
+                             f'{phasefield_fraction_i:.3f}')
 
-            break
+                iterations_failed = True
 
-        phasefield_fractions.append(phasefield_fraction_i)
-        energy_vs_iterations.extend(energy_vs_iterations_i)
-        energy_vs_phasefield.append(energy_vs_iterations_i[-1])
+                break
 
-        if energy_vs_iterations_i[0] < energy_vs_iterations_i[-1]:
-            logger.info('Energy did not decrease')
-            count_stop_requests += 1
+            phasefield_fractions.append(phasefield_fraction_i)
+            energy_vs_iterations.extend(energy_vs_iterations_i)
+            energy_vs_phasefield.append(energy_vs_iterations_i[-1])
 
-        elif converged_i and \
-          iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_CONVERGED:
-            logger.info('Converged within a threshold number of iterations')
-            count_stop_requests += 1
+            if energy_vs_iterations_i[0] < energy_vs_iterations_i[-1]:
+                logger.info('Energy functional did not decrease')
+                count_stop_requests += 1
 
-        elif not converged_i and \
-          iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP_WHEN_DIVERGED:
-            logger.info('Diverged within a threshold number of iterations')
-            count_stop_requests += 1
+            elif iterations_i <= MINIMUM_ITERATIONS_FOR_REQUESTING_STOP:
+                logger.info('Returned within a threshold number of iterations')
+                count_stop_requests += 1
 
-        if count_stop_requests == MINIMUM_STOP_REQUESTS_FOR_TRIGGERING_STOP:
-            logger.info('Reached threshold number of consecutive stop requests')
-            break
+            if count_stop_requests == MINIMUM_STOP_REQUESTS_FOR_TERMINATION:
+                logger.info('Reached threshold number of consecutive stop requests')
+                break
 
-        phasefield_fraction_i += phasefield_fraction_increment
+            phasefield_fraction_i += phasefield_fraction_increment
 
-    else:
-        logger.warning('Reached upper limit of phasefield domain fraction')
+        else:
+            logger.warning('Reached upper limit of phasefield domain fraction')
+
+    except KeyboardInterrupt:
+        logger.info('Forced finish due to a keyboard interrupt')
 
     return iterations_failed, energy_vs_iterations, \
            energy_vs_phasefield, phasefield_fractions, \
