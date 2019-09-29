@@ -20,7 +20,7 @@ from dolfin import *
 
 import optim
 import material
-import utility
+import example.utility
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -42,7 +42,6 @@ optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
 
 def phasefield_penalty(p):
     return dolfin.grad(p)**2
-
 
 def material_integrity(p, rho_min=1e-5):
     '''Material integrity given the value of phasefield.
@@ -71,162 +70,160 @@ if __name__ == "__main__":
     # Write solutions every number of solver iterations
     # (All last solutions will be written automatically)
 
-    writing_period = 100
+    results_writing_period = 100
     write_phasefield_pvd = True
+    write_phasefield_npy = True
     write_displacements_pvd = False
+    write_displacements_npy = False
 
     ### Problem parameters
 
-    load_type = [
-        # "uniaxial_uniform",
-        "biaxial_uniform",
-        ]
+    domain_p0 = np.array([0.0,0.0])
+    domain_p1 = np.array([1.0,1.0])
+
+    domain_x0, domain_y0 = domain_p0
+    domain_x1, domain_y1 = domain_p1
+
+    domain_L = domain_x1 - domain_x0
+    domain_H = domain_y1 - domain_y0
 
     material_model_name = [
         "LinearElasticModel",
         # "NeoHookeanModel",
         ]
 
-    boundary_displacement_value = [
-        0.1,
-        # [0.1, 0.2],
-        ] # NOTE: If an element is a sequence, the end-value of the sequence
-          #       will be used but the value will be attained incrementally.
-
-    slack = 1e-2
-    defect_nucleation_centers = [
-        # np.array([[0,0]]), # Only for benchmarking
-        # np.array([[0,0],[1,1]]), # Only for benchmarking
-        # np.array([[0.25,0.5],[0.75,0.5]]), # Only for benchmarking
-        np.array([[0.25,0],[0.75,1]]),
-        # np.array([[slack,0],[1,slack],[1-slack,1],[0,1-slack]]),
+    mean_axial_strains = [
+        [0.100, 0.100],
         ]
 
+    delta = 1e-2
+    defect_nucleation_centers = [
+        # np.array([[domain_x0, domain_y0]]), # Benchmark
+        # np.array([[(domain_x0+domain_x1)/2, (domain_y0+domain_y1)/2]]), # Benchmark
+        # np.array([[domain_x0, domain_y0],
+        #           [domain_x1, domain_y1]]), # Benchmark
+        # np.array([[domain_x0, domain_y0],
+        #           [domain_x1, domain_y0],
+        #           [domain_x1, domain_y1],
+        #           [domain_x0, domain_y1]]), # Benchmark
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x0+0.75*domain_L, domain_y1]]),
+        np.array([[domain_x0+0.25*domain_L, domain_y0],
+                  [domain_x1-0.25*domain_L, domain_y1],
+                  [domain_x1, domain_y0+0.25*domain_H],
+                  [domain_x0, domain_y1-0.25*domain_H]]),
+        ## np.array([[domain_x0+0.10*domain_L, domain_y0],
+        ##           [domain_x0+0.90*domain_L, domain_y1]]),
+        # np.array([[domain_x0+delta, domain_y0],
+        #           [domain_x1, domain_y0+delta],
+        #           [domain_x1-delta, domain_y1],
+        #           [domain_x0, domain_y1-delta]]),
+        ]
+
+    def compute_defect_nucleation_diameter(mesh_element_size):
+        "Compute the diameter using the mesh element size."
+        return mesh_element_size * (1+EPS) * 10
+
     phasefield_penalty_weight = [
-        # 0.300,
-        # 0.400,
-        # 0.425,
         # 0.450,
         0.475,
         # 0.485,
+        # 0.500,
         ]
 
-    defect_nucleation_diameter = "default" # or `None`, or "default"
-    defect_nucleation_elemental_diameter = 10.0 # Default fallback
-
-    phasefield_collision_distance = 0.05 # `None`, or "default"
-    phasefield_collision_elemental_distance = 12.0 # Default fallback
+    phasefield_collision_distance = [
+        0.100,
+        # 0.050,
+        ]
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
-        # 0.020,
-        0.010,
+        # 0.200,
+        # 0.100,
+        0.050,
+        # 0.010,
         # 0.005,
-        # 0.002,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
         # 0.050,
-        0.025,
-        # 0.010,
+        # 0.025,
+        0.010,
         ]
 
-    phasefield_maximum_domain_fraction = 1.0
-
-    if phasefield_maximum_domain_fraction != 1.0:
-        logger.warning('phasefield_maximum_domain_fraction != 1.0')
+    maximum_phasefield_fraction = 0.5
+    minimum_energy_fraction = 1e-3
 
     ### Discretization parameters
 
-    # Displacement function degree
-    displacement_degree = 1
-
-    # Phasefield function degree
-    phasefield_degree = 1
+    num_elements_on_edges = [
+        # 40,
+        # 41,
+        # 80,
+        81,
+        # 121,
+        # 160,
+        # 161,
+        # 320,
+        # 321,
+        ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
 
     # mesh_diagonal = "left/right"
     mesh_diagonal = "crossed"
     # mesh_diagonal = "left"
 
-    number_of_elements_along_edge = [
-        # 30,
-        # 40,
-        # 41,
-        # 60,
-        # 61,
-        # 80,
-        # 81,
-        121,
-        # 160,
-        # 161,
-        # 320,
-        # 321,
-        ] # NOTE: Should try both even and odd numbers of elements
-
-    ### Input control parameters (if not defined above)
-
-    if phasefield_penalty_weight is None or not phasefield_penalty_weight:
-        phasefield_penalty_weight = eval(input('\nphasefield_penalty_weight:\n'))
-
-    if boundary_displacement_value is None or not boundary_displacement_value:
-        boundary_displacement_value = eval(input('\nboundary_displacement_value:\n'))
-
-    if phasefield_iteration_stepsize is None or not phasefield_iteration_stepsize:
-        phasefield_iteration_stepsize = eval(input('\nphasefield_iteration_stepsize:\n'))
-
-    if phasefield_fraction_increment is None or not phasefield_fraction_increment:
-        phasefield_fraction_increment = eval(input('\nphasefield_fraction_increment:\n'))
-
-    if number_of_elements_along_edge is None or not number_of_elements_along_edge:
-        number_of_elements_along_edge = eval(input('\nnumber_of_elements_along_edge:\n'))
-
-    ### Input fixed parameters (if not defined above)
-
-    if defect_nucleation_diameter is None:
-        defect_nucleation_diameter = eval(input('\ndefect_nucleation_diameter:\n'))
-
-    if phasefield_collision_distance is None:
-        phasefield_collision_distance = eval(input('\nphasefield_collision_distance:\n'))
+    displacement_degree = 1
+    phasefield_degree = 1
 
     ### Control parameter grid
 
-    outer_loop_parameters = optim.helper.make_parameter_combinations(
-        load_type,
+    outer_loop_parameters = example.utility.make_parameter_combinations(
+        mean_axial_strains,
         material_model_name,
-        boundary_displacement_value,
-        number_of_elements_along_edge,
+        num_elements_on_edges,
         )
 
-    inner_loop_parameters = optim.helper.make_parameter_combinations(
+    inner_loop_parameters = example.utility.make_parameter_combinations(
         defect_nucleation_centers,
         phasefield_penalty_weight,
+        phasefield_collision_distance,
         phasefield_fraction_increment,
         phasefield_iteration_stepsize,
         )
 
     for (
-        load_type_i,
+        mean_axial_strains_i,
         material_model_name_i,
-        boundary_displacement_value_i,
-        number_of_elements_along_edge_i,
+        num_elements_on_edges_i,
         ) in outer_loop_parameters:
 
-        ### Discretization
+        if not isinstance(num_elements_on_edges_i, (tuple, list, np.ndarray)):
+            num_elements_on_edges_i = (num_elements_on_edges_i,
+                max(int(round(num_elements_on_edges_i*domain_H/domain_L)), 1))
+        elif len(num_elements_on_edges_i) != 2:
+            raise TypeError
 
-        mesh = utility.unit_square_mesh(
-            number_of_elements_along_edge_i, mesh_diagonal)
+        if not isinstance(mean_axial_strains_i, (tuple, list, np.ndarray)):
+            mean_axial_strains_i = (mean_axial_strains_i,)*2
+        elif len(mean_axial_strains_i) != 2:
+            raise TypeError
 
-        mesh_x0, mesh_y0 = mesh.coordinates().min(axis=0)
-        mesh_x1, mesh_y1 = mesh.coordinates().max(axis=0)
+        boundary_displacements_i = [
+            mean_axial_strains_i[0] * domain_L/2,
+            mean_axial_strains_i[1] * domain_H/2,
+            ]
 
-        defect_xlim = mesh_x0, mesh_x1
-        defect_ylim = mesh_y0, mesh_y1
+        ### Mesh
 
-        ### Boundary subdomains
+        mesh = example.utility.rectangle_mesh(domain_p0, domain_p1,
+            num_elements_on_edges_i[0], num_elements_on_edges_i[1],
+            mesh_diagonal)
+
+        ### Boundaries
 
         boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
-            utility.boundaries_of_rectangular_domain(mesh)
+            example.utility.boundaries_of_rectangle_mesh(mesh)
 
         boundary_markers = dolfin.MeshFunction(
             'size_t', mesh, mesh.geometry().dim()-1)
@@ -267,14 +264,10 @@ if __name__ == "__main__":
 
         ### Dirichlet boundary conditions
 
-        if load_type_i == "biaxial_uniform":
-            bcs, set_value_bcs = utility.uniform_biaxial_extension_bcs(V_u)
+        bcs, bcs_set_values = example.utility.uniform_extension_bcs(V_u)
 
-        elif load_type_i == "uniaxial_uniform":
-            bcs, set_value_bcs = utility.uniform_uniaxial_extension_bcs(V_u)
-
-        else:
-            raise ValueError('Parameter `load_type_i`?')
+        bcs_set_values(ux=boundary_displacements_i[0],
+                       uy=boundary_displacements_i[1])
 
         ### Material model
 
@@ -315,54 +308,35 @@ if __name__ == "__main__":
 
         ### Solve for undamaged material
 
-        p.vector()[:] = 0.0
-        u.vector()[:] = 0.0
-
-        if hasattr(boundary_displacement_value_i, '__len__'):
-            for boundary_displacement_value_i \
-                in boundary_displacement_value_i:
-                set_value_bcs(boundary_displacement_value_i)
-                dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
-        else:
-            set_value_bcs(boundary_displacement_value_i)
-            dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
-
-        undamaged_solution_vector = u.vector().get_local()
-        undamaged_potential_energy = dolfin.assemble(W)
+        dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
+        W_undamaged, u_arr_undamaged = dolfin.assemble(W), u.vector().get_local()
+        minimum_energy_threshold = minimum_energy_fraction * W_undamaged
 
         for (
             defect_nucleation_centers_i,
             phasefield_penalty_weight_i,
+            phasefield_collision_distance_i,
             phasefield_fraction_increment_i,
             phasefield_iteration_stepsize_i,
             ) in inner_loop_parameters:
 
             problem_start_time = time.time()
 
-            if not (defect_nucleation_diameter is None or \
-                    defect_nucleation_diameter is "default"):
-                defect_nucleation_diameter_i = defect_nucleation_diameter
-            else:
-                defect_nucleation_diameter_i = \
-                    defect_nucleation_elemental_diameter * mesh.hmax() * (1+EPS)
-
-            if not (phasefield_collision_distance is None or \
-                    phasefield_collision_distance is "default"):
-                phasefield_collision_distance_i = phasefield_collision_distance
-            else:
-                phasefield_collision_distance_i = \
-                    phasefield_collision_elemental_distance * mesh.hmax() * (1+EPS)
+            defect_nucleation_diameter_i = \
+                compute_defect_nucleation_diameter(mesh.hmax())
 
             problem_title = (
                 f"date({time.strftime('%m%d_%H%M')})-"
-                f"load({load_type_i})-"
                 f"model({material_model_name_i})-"
-                f"mesh({mesh.num_vertices()})-"
-                f"count({len(defect_nucleation_centers_i)})-"
-                f"disp({str(f'{boundary_displacement_value_i:.3f}').replace('.','d')})-"
-                f"regul({str(f'{phasefield_penalty_weight_i:.3f}').replace('.','d')})-"
-                f"inc({str(f'{phasefield_fraction_increment_i:.3f}').replace('.','d')})-"
-                f"step({str(f'{phasefield_iteration_stepsize_i:.3f}').replace('.','d')})"
+                f"mesh({num_elements_on_edges_i[0]:d}x"
+                     f"{num_elements_on_edges_i[1]:d})-"
+                f"dims({domain_L:.3g}x{domain_H:.3g})-"
+                f"flaws({len(defect_nucleation_centers_i)})-"
+                f"exx({mean_axial_strains_i[0]:.3g})-"
+                f"eyy({mean_axial_strains_i[1]:.3g})-"
+                f"reg({phasefield_penalty_weight_i:.3g})-"
+                f"inc({phasefield_fraction_increment_i:.3g})-"
+                f"step({phasefield_iteration_stepsize_i:.3g})"
                 )
 
             logger.info("Begin solving problem:\n\t"
@@ -379,25 +353,57 @@ if __name__ == "__main__":
                 if not os.path.isdir(results_outdir_figures): os.makedirs(results_outdir_figures)
                 if not os.path.isdir(results_outdir_functions): os.makedirs(results_outdir_functions)
 
-                utility.remove_outfiles(results_outdir, SAFE_TO_REMOVE_FILE_TYPES)
-                utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
-                utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
-                utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
+                example.utility.remove_outfiles(results_outdir, SAFE_TO_REMOVE_FILE_TYPES)
+                example.utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
+                example.utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
+                example.utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
 
-                solution_writer = utility.PeriodicSolutionWriter(
-                    results_outdir_functions, u, p, writing_period,
-                    write_phasefield_pvd, write_displacements_pvd)
+                if write_displacements_pvd or write_displacements_npy:
+
+                    solution_writer_u = example.utility.FunctionWriter(
+                        results_outdir_functions, u, "u", results_writing_period,
+                        write_displacements_pvd, write_displacements_npy)
+
+                    write_solution_u = solution_writer_u.write
+                    write_solution_u_periodic = solution_writer_u.periodic_write
+
+                else:
+                    write_solution_u = lambda : None
+                    write_solution_u_periodic = lambda : None
+
+                if write_phasefield_pvd or write_phasefield_npy:
+
+                    solution_writer_p = example.utility.FunctionWriter(
+                        results_outdir_functions, p, "p", results_writing_period,
+                        write_phasefield_pvd, write_phasefield_npy)
+
+                    write_solution_p = solution_writer_p.write
+                    write_solution_p_periodic = solution_writer_p.periodic_write
+
+                else:
+                    write_solution_p = lambda : None
+                    write_solution_p_periodic = lambda : None
+
+                def write_solutions():
+                    write_solution_u()
+                    write_solution_p()
+
+                def write_solutions_periodic():
+                    write_solution_u_periodic()
+                    write_solution_p_periodic()
 
             else:
-                solution_writer = type("DummySolutionWriter", (),
-                    dict(write=lambda calling_object : None,
-                         periodic_write=lambda calling_object : None))
+                write_solutions = lambda : None
+                write_solutions_periodic = lambda : None
 
-            u.vector()[:] = undamaged_solution_vector
+            u.vector()[:] = u_arr_undamaged
+
+            _solution_writer_function_for_each_phasefield_fraction = None # write_solutions
+            _solution_writer_function_for_each_phasefield_iteration = write_solutions_periodic
 
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
-                optim.helper.solve_compliance_maximization_problem(
+                example.utility.solve_compliance_maximization_problem(
                     W, P, u, p, bcs,
                     defect_nucleation_centers_i,
                     defect_nucleation_diameter_i,
@@ -405,29 +411,34 @@ if __name__ == "__main__":
                     phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
-                    phasefield_maximum_domain_fraction,
-                    solution_writer.periodic_write,
+                    maximum_phasefield_fraction,
+                    minimum_energy_threshold,
+                    _solution_writer_function_for_each_phasefield_fraction,
+                    _solution_writer_function_for_each_phasefield_iteration
                     )
+
+            if _solution_writer_function_for_each_phasefield_fraction is None:
+                write_solutions()
 
             energy_vs_iterations = energy_vs_iterations[
                 ::max(1, int(len(energy_vs_iterations)/1000))]
 
-            normalized_energy_vs_iterations = [W_i / undamaged_potential_energy
-                                               for W_i in energy_vs_iterations]
+            normalized_energy_vs_iterations = \
+                [W_j / W_undamaged for W_j in energy_vs_iterations]
 
-            normalized_energy_vs_phasefield = [W_i / undamaged_potential_energy
-                                               for W_i in energy_vs_phasefield]
+            normalized_energy_vs_phasefield = \
+                [W_j / W_undamaged for W_j in energy_vs_phasefield]
 
             material_fraction = dolfin.project(rho, V_p)
-            optim.helper.apply_diffusive_smoothing(material_fraction, 1e-5)
-            optim.helper.apply_interval_bounds(material_fraction, 0.0, 1.0)
+            optim.filter.apply_diffusive_smoothing(material_fraction, 1e-5)
+            optim.filter.apply_interval_bounds(material_fraction, 0.0, 1.0)
 
             stress_field = dolfin.project(pk2, V_T)
 
-            maximal_compressive_stress_field = optim.helper \
+            maximal_compressive_stress_field = example.utility \
                 .compute_maximal_compressive_stress_field(stress_field)
 
-            fraction_compressive_stress_field = optim.helper \
+            fraction_compressive_stress_field = example.utility \
                 .compute_fraction_compressive_stress_field(stress_field)
 
             stress_field.rename('stress_tensor', '')
@@ -449,12 +460,12 @@ if __name__ == "__main__":
                     "stress_field.pvd")) << stress_field
 
                 dolfin.File(os.path.join(results_outdir_functions,
-                    "maximal_compressive_stress_field.pvd")) << \
-                    maximal_compressive_stress_field
+                    "maximal_compressive_stress_field.pvd")) \
+                    << maximal_compressive_stress_field
 
                 dolfin.File(os.path.join(results_outdir_functions,
-                    "fraction_compressive_stress_field.pvd")) << \
-                    fraction_compressive_stress_field
+                    "fraction_compressive_stress_field.pvd")) \
+                    << fraction_compressive_stress_field
 
                 np.savetxt(os.path.join(results_outdir_arrays,
                     "normalized_energy_vs_iterations.out"),
@@ -467,36 +478,36 @@ if __name__ == "__main__":
                 np.savetxt(os.path.join(results_outdir_arrays,
                     "phasefield_fractions.out"), phasefield_fractions)
 
-                solution_writer.write(forcewrite_all=True)
-
             if plot_results or write_results:
 
                 figure_handles = []
 
-                figure_handles.append(utility.plot_energy_vs_iterations(
-                    normalized_energy_vs_iterations,
-                    figname="potential_energy_vs_iterations",
-                    ylabel="Normalized potential energy"))
-
-                # figure_handles.append(utility.plot_energy_vs_iterations(
-                #     normalized_energy_vs_iterations,
-                #     figname="potential_energy_vs_iterations_semilogy",
-                #     ylabel="Normalized potential energy", semilogy=True))
-
-                figure_handles.append(utility.plot_energy_vs_phasefields(
-                    normalized_energy_vs_phasefield, phasefield_fractions,
-                    figname="potential_energy_vs_phasefield",
-                    ylabel="Normalized potential energy"))
-
-                # figure_handles.append(utility.plot_energy_vs_phasefields(
-                #     normalized_energy_vs_phasefield, phasefield_fractions,
-                #     figname="potential_energy_vs_phasefield_semilogy",
-                #     ylabel="Normalized potential energy", semilogy=True))
-
-                figure_handles.append(utility.plot_phasefiled(p))
+                figure_handles.append(
+                    example.utility.plot_energy_vs_iterations(
+                        normalized_energy_vs_iterations,
+                        figname="potential_energy_vs_iterations",
+                        ylabel="Normalized potential energy"))
 
                 figure_handles.append(
-                    utility.plot_material_fraction(material_fraction))
+                    example.utility.plot_energy_vs_iterations(
+                        normalized_energy_vs_iterations,
+                        figname="potential_energy_vs_iterations_semilogy",
+                        ylabel="Normalized potential energy", semilogy=True))
+
+                figure_handles.append(
+                    example.utility.plot_energy_vs_phasefields(
+                        normalized_energy_vs_phasefield, phasefield_fractions,
+                        figname="potential_energy_vs_phasefield",
+                        ylabel="Normalized potential energy"))
+
+                figure_handles.append(
+                    example.utility.plot_energy_vs_phasefields(
+                        normalized_energy_vs_phasefield, phasefield_fractions,
+                        figname="potential_energy_vs_phasefield_semilogy",
+                        ylabel="Normalized potential energy", semilogy=True))
+
+                figure_handles.append(example.utility.plot_phasefiled(p))
+                figure_handles.append(example.utility.plot_material_fraction(material_fraction))
 
                 if write_results:
 
@@ -513,7 +524,7 @@ if __name__ == "__main__":
                 if not plot_results:
                     plt.close('all')
 
-            logger.info("Done solving problem\n\t"
+            logger.info("Finished solving problem\n\t"
                 + problem_title.replace('-','\n\t'))
 
             problem_finish_time = time.time()

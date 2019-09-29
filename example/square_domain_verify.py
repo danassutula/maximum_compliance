@@ -6,10 +6,7 @@ import matplotlib.pyplot as plt
 import material
 import optim
 
-from optim.helper import project_function_periodically
-from optim.helper import apply_diffusive_smoothing
-from optim.helper import apply_interval_bounds
-
+from example import utility
 from example.square_domain import material_integrity
 
 plt.close('all')
@@ -39,13 +36,26 @@ plt.close('all')
 
 # filename = "/Users/danas.sutula/Documents/Programs/Python/compliance_maximization/results_ktt/square_domain/date(0919_1438)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000047.npy"
 # filename = "results_ktt/square_domain/date(0920_0742)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000033.npy"
-filename = "results_ktt/square_domain/date(0920_1430)-load(biaxial_uniform)-model(LinearElasticModel)-mesh(52165)-count(2)-disp(0d100)-regul(0d475)-inc(0d002)-step(0d025)/functions/p000068.npy"
+
+# filename = "results_ktt/square_domain/date(1001_1800)-model(LinearElasticModel)-mesh(81x162)-defects(2)-exx(0d100)-eyy(0d050)-regul(0d485)-inc(0d010)-step(0d010)/functions/p000090.npy"
+
+filename = "results/square_domain/date(1002_1313)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(0.1)-eyy(0.05)-reg(0.475)-inc(0.01)-step(0.01)/functions/p000044.npy"
 
 require_displacement_solution = True
 using_material_density_instead_of_phasefield = True
 
-num_elements_x = 161
-num_elements_y = num_elements_x
+num_elements_x, num_elements_y = \
+    [int(s) for s in utility.extract_substring(
+     filename, str_beg="mesh(", str_end=")").split("x")]
+
+unitcell_L, unitcell_H = \
+    [float(s) for s in utility.extract_substring(
+     filename, str_beg="dims(", str_end=")").split("x")]
+
+exx_unitcell = float(utility.extract_substring(filename, "exx(", ")"))
+eyy_unitcell = float(utility.extract_substring(filename, "eyy(", ")"))
+
+unitcell_p0, unitcell_p1 = [0,0], [unitcell_L,unitcell_H]
 
 element_degree = 1
 element_family = "CG"
@@ -53,8 +63,11 @@ mesh_diagonal = "crossed"
 
 minimum_material_integrity = 1e-5
 
-mesh_unitcell = dolfin.UnitSquareMesh(num_elements_x, num_elements_y, mesh_diagonal)
-V_unitcell = dolfin.FunctionSpace(mesh_unitcell, element_family, element_degree)
+mesh_unitcell = utility.rectangle_mesh(
+    unitcell_p0, unitcell_p1, num_elements_x, num_elements_y, mesh_diagonal)
+
+V_unitcell = dolfin.FunctionSpace(
+    mesh_unitcell, element_family, element_degree)
 
 p_unitcell = dolfin.Function(V_unitcell)
 p_unitcell.vector()[:] = np.load(filename)
@@ -66,18 +79,18 @@ else:
     m_unitcell = p_unitcell
 
 
-num_unticells_x = 3
-num_unitcells_y = 3
+num_unticells_x = 4
+num_unitcells_y = 4
 
 mirror_x = True
 mirror_y = True
 
-overhang_fraction = 0.10
+overhang_fraction = 0.0
 
-extension_final = 1.000
-extension_initial = 1.000
-extension_stepsize = 0.01
-maximum_refinements = 2
+extension_strain_final = 0.20
+extension_strain_initial = 0.20
+extension_strain_stepsize = 0.20
+strain_stepsize_refinements = 2
 
 material_parameters = {
     'E': dolfin.Constant(1.0),
@@ -87,14 +100,21 @@ material_parameters = {
 num_elements_x = 250
 num_elements_y = num_elements_x
 
-mesh = dolfin.UnitSquareMesh(num_elements_x, num_elements_y, mesh_diagonal)
+domain_L = 1.0
+domain_H = 1.0
+
+domain_p0, domain_p1 = [0,0], [domain_L,domain_H]
+
+mesh = utility.rectangle_mesh(
+    domain_p0, domain_p1, num_elements_x, num_elements_y, mesh_diagonal)
+
 V_m = dolfin.FunctionSpace(mesh, element_family, element_degree)
 
-m = optim.helper.project_function_periodically(
+m = utility.project_function_periodically(
     m_unitcell, num_unticells_x, num_unitcells_y,
     V_m, mirror_x, mirror_y, overhang_fraction)
 
-optim.helper.apply_interval_bounds(m,
+optim.filter.apply_interval_bounds(m,
     lower=minimum_material_integrity, upper=1.0)
 
 V_u = dolfin.VectorFunctionSpace(mesh, 'CG', 1)
@@ -106,8 +126,8 @@ uyD = dolfin.Constant(0.0)
 bcs = [
     dolfin.DirichletBC(V_u.sub(0), uxD, "x[0] > 1.0-DOLFIN_EPS", method="pointwise"),
     dolfin.DirichletBC(V_u.sub(1), uyD, "x[1] > 1.0-DOLFIN_EPS", method="pointwise"),
-    dolfin.DirichletBC(V_u.sub(0),   0, "x[0] < DOLFIN_EPS", method="pointwise"),
-    dolfin.DirichletBC(V_u.sub(1),   0, "x[1] < DOLFIN_EPS", method="pointwise"),
+    dolfin.DirichletBC(V_u.sub(0),   0, "x[0] < DOLFIN_EPS"    , method="pointwise"),
+    dolfin.DirichletBC(V_u.sub(1),   0, "x[1] < DOLFIN_EPS"    , method="pointwise"),
     ]
 
 psi = material.LinearElasticModel(material_parameters, u).strain_energy_density()
@@ -117,11 +137,13 @@ W = m * psi * dolfin.dx
 F = dolfin.derivative(W, u)
 J = dolfin.derivative(F, u)
 
-def solve_displacement_problem(boundary_displacement_value=None, method="newton"):
+def solve_displacement_problem(exx, eyy="auto", method="newton"):
 
-    if boundary_displacement_value is not None:
-        uxD.assign(boundary_displacement_value)
-        uyD.assign(boundary_displacement_value)
+    if eyy is "auto":
+        eyy = eyy_unitcell / exx_unitcell * exx
+
+    uxD.assign(domain_L * exx)
+    uyD.assign(domain_H * eyy)
 
     try:
         dolfin.solve(F==0, u, bcs=bcs, J=J,
@@ -143,22 +165,22 @@ def solve_displacement_problem(boundary_displacement_value=None, method="newton"
         return True
 
 def solve_displacement_problem_incrementally(
-        value_initial, value_maximum, stepsize, maximum_refinements=0):
+        strain_initial, strain_maximum, stepsize, maximum_refinements=0):
 
     refinements_count = 0
-    value_current = value_initial
+    strain_current = strain_initial
     u_arr_old = u.vector().get_local()
 
-    while value_current <= value_maximum:
-        print(f"INFO: Solving for {value_current:.3f} ...")
+    while strain_current <= strain_maximum:
+        print(f"INFO: Solving for {strain_current:.3f} ...")
 
-        if solve_displacement_problem(value_current):
+        if solve_displacement_problem(strain_current):
             u_arr_old = u.vector().get_local()
 
         else:
 
             u.vector()[:] = u_arr_old
-            value_current -= stepsize
+            strain_current -= stepsize
 
             if refinements_count >= maximum_refinements:
                 print(f"ERROR: Could not solve.")
@@ -167,20 +189,22 @@ def solve_displacement_problem_incrementally(
             refinements_count += 1
             stepsize /= 2
 
-        value_current += stepsize
+        strain_current += stepsize
 
 
 if __name__ == "__main__":
 
     if require_displacement_solution:
 
-        solve_displacement_problem_incrementally(extension_initial,
-            extension_final, extension_stepsize, maximum_refinements)
+        solve_displacement_problem_incrementally(
+            extension_strain_initial, extension_strain_final,
+            extension_strain_stepsize, strain_stepsize_refinements)
 
-        # dolfin.File("u.pvd") << u
+        # dolfin.File("temp_u.pvd") << u
+        # dolfin.File("temp_m.pvd") << m
 
     # dolfin.File("m_unitcell.pvd") << m_unitcell
-    # dolfin.File("m.pvd") << m
+    #
 
     plt.figure("Phasefield (unit-cell)")
     dolfin.plot(m_unitcell)
