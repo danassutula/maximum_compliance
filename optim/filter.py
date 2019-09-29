@@ -1,15 +1,11 @@
 
 import dolfin
-import logging
 
 from dolfin import Constant
 from dolfin import assemble
 from dolfin import grad
 from dolfin import dot
 from dolfin import dx
-
-from . import config
-logger = config.logger
 
 
 class GradientFilter:
@@ -71,3 +67,47 @@ class DiffusionFilter:
     def apply(self, fn):
         x = fn.vector(); b = self._M*x
         return self.solver.solve(x, b)
+
+
+def apply_diffusive_smoothing(fn, kappa):
+
+    if isinstance(fn, (list, tuple)):
+        return_as_sequence = True
+    else:
+        return_as_sequence = False
+        fn = (fn,)
+
+    if not all(isinstance(fn_i, dolfin.Function) for fn_i in fn):
+        raise TypeError('Parameter `fn` must either be a `dolfin.Function` '
+                        'or a sequence (list, tuple) of `dolfin.Function`s.')
+
+    diffusion_filter = DiffusionFilter(fn[0].function_space(), kappa)
+
+    for fn_i in fn:
+        diffusion_filter.apply(fn_i)
+
+    return fn if return_as_sequence else fn[0]
+
+
+def apply_interval_bounds(fn, lower=0.0, upper=1.0):
+
+    if isinstance(fn, (list, tuple)):
+        return_as_sequence = True
+    else:
+        return_as_sequence = False
+        fn = (fn,)
+
+    if not all(isinstance(fn_i, dolfin.Function) for fn_i in fn):
+        raise TypeError('Parameter `fn` must either be a `dolfin.Function` '
+                        'or a sequence (list, tuple) of `dolfin.Function`s.')
+
+    for fn_i in fn:
+
+        x = fn_i.vector().get_local()
+
+        x[x < lower] = lower
+        x[x > upper] = upper
+
+        fn_i.vector().set_local(x)
+
+    return fn if return_as_sequence else fn[0]

@@ -1,5 +1,49 @@
 
 
+class PeriodicBoundaries(dolfin.SubDomain):
+    '''Top boundary is slave boundary wrt bottom (master) boundary.
+    Right boundary is slave boundary wrt left (master) boundary.'''
+
+    def __init__(self, mesh):
+        super().__init__() # Important!
+
+        x0, y0 = mesh.coordinates().min(0)
+        x1, y1 = mesh.coordinates().max(0)
+
+        self.L = x1 - x0
+        self.H = y1 - y0
+
+        self.x_lhs = x0 + EPS*self.L
+        self.y_bot = y0 + EPS*self.H
+
+        self.x_rhs = x1 - EPS*self.L
+        self.y_top = y1 - EPS*self.H
+
+    def inside(self, x, on_boundary):
+        '''Check if `x` is on the slave boundary'''
+        return on_boundary and \
+            ((x[0] > self.x_rhs and x[1] > self.y_bot) or
+             (x[0] > self.x_lhs and x[1] > self.y_top))
+
+    def map(self, x, y):
+        '''Map master point `x` to slave point `y`.'''
+
+        y[0] = x[0]
+        y[1] = x[1]
+
+        if x[0] < self.x_lhs and x[1] > self.y_top:
+            pass
+
+        elif x[0] > self.x_rhs and x[1] < self.y_bot:
+            pass
+
+        elif x[0] < self.x_lhs:
+            y[0] += self.L
+
+        elif x[1] < self.y_bot:
+            y[1] += self.H
+            
+
 
 normL1_dp = self._domain_integral_dof_weights.dot(abs_dp_arr)
 
