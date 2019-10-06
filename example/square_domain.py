@@ -43,7 +43,7 @@ optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
 def phasefield_penalty(p):
     return dolfin.grad(p)**2
 
-def material_integrity(p, rho_min=1e-5):
+def material_integrity(p, rho_min=1e-6):
     '''Material integrity given the value of phasefield.
 
     Notes
@@ -92,15 +92,17 @@ if __name__ == "__main__":
         # "NeoHookeanModel",
         ]
 
+    # load_type = "vertical"
     load_type = "biaxial"
     mean_axial_strains = [
         # [0.000, 0.100],
         [0.100, 0.100],
         ]
 
-    delta = 1e-8
+    delta = 1e-10
     defect_nucleation_centers = [
         # np.array([[domain_x0, domain_y0]]), # Benchmark
+        # np.array([[domain_x0, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[(domain_x0+domain_x1)/2, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[domain_x0, domain_y0],
         #           [domain_x1, domain_y1]]),
@@ -108,8 +110,21 @@ if __name__ == "__main__":
                   [domain_x1, domain_y0+delta],
                   [domain_x1-delta, domain_y1],
                   [domain_x0, domain_y1-delta]]),
+        # np.array([[domain_x0, domain_y0],
+        #           [domain_x1, domain_y0],
+        #           [domain_x0, domain_y1]]), # Not interesting (mesh_diagonal="right")
+        # np.array([[domain_x0+0.1, domain_y0],
+        #           [domain_x1-0.1, domain_y0],
+        #           [domain_x1, domain_y1-0.1],
+        #           [domain_x0, domain_y1-0.1]]), # Not interesting
         # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x0+0.75*domain_L, domain_y1]]), # Interesting
+        #           [domain_x0+0.75*domain_L, domain_y1],
+        #           [domain_x0, domain_y0+0.25*domain_H],
+        #           [domain_x1, domain_y0+0.75*domain_H]]), # Not Interesting
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x1, domain_y1-0.25*domain_H]]), # Not Interesting
+        np.array([[domain_x0+0.25*domain_L, domain_y0],
+                  [domain_x0+0.75*domain_L, domain_y1]]), # Interesting
         # np.array([[domain_x0+0.25*domain_L, domain_y0],
         #           [domain_x1-0.25*domain_L, domain_y1],
         #           [domain_x1, domain_y0+0.25*domain_H],
@@ -119,9 +134,6 @@ if __name__ == "__main__":
         #           [domain_x1, domain_y0+0.25*domain_H],
         #           [domain_x0, domain_y1-0.25*domain_H],
         #           [0.5*(domain_x0+domain_x1), 0.5*(domain_y0+domain_y1)]]), # Interesting
-        # np.array([[domain_x0, domain_y0],
-        #           [domain_x1, 0.5*(domain_y0+domain_y1)],
-        #           [domain_x0, domain_y1]]),
         ]
 
     constrained_subdomain_functions = False
@@ -146,7 +158,8 @@ if __name__ == "__main__":
     phasefield_penalty_weight = [
         # 0.400,
         # 0.450,
-        0.470,
+        0.460,
+        # 0.470,
         # 0.480,
         # 0.490,
         # 0.500,
@@ -161,9 +174,9 @@ if __name__ == "__main__":
     phasefield_fraction_increment = [
         # 0.200,
         # 0.100,
-        0.050,
+        # 0.050,
         # 0.025,
-        # 0.010,
+        0.010,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
@@ -173,8 +186,9 @@ if __name__ == "__main__":
         0.010,
         ]
 
-    maximum_phasefield_fraction = 1/3
-    minimum_energy_fraction = 1e-3
+    minimum_phasefield_fraction = 0.10
+    maximum_phasefield_fraction = 0.30
+    minimum_energy_fraction = 1e-4
 
     ### Discretization parameters
 
@@ -182,10 +196,10 @@ if __name__ == "__main__":
         # 40,
         # 41,
         # 80,
-        81,
+        # 81,
         # 121,
         # 160,
-        # 161,
+        161,
         # 320,
         # 321,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
@@ -193,6 +207,7 @@ if __name__ == "__main__":
     # mesh_diagonal = "left/right"
     mesh_diagonal = "crossed"
     # mesh_diagonal = "left"
+    # mesh_diagonal = "right"
 
     displacement_degree = 1
     phasefield_degree = 1
@@ -433,6 +448,7 @@ if __name__ == "__main__":
                     phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
+                    minimum_phasefield_fraction,
                     maximum_phasefield_fraction,
                     minimum_energy_threshold,
                     constrained_subdomain_functions_i,

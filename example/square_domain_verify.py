@@ -36,11 +36,15 @@ RESULTS_SUBDIR_FUNCTIONS = "functions_periodic"
 #
 # mesh: 161x161
 #
-filename = "results_ktt/square_domain/date(1006_1044)-model(LinearElasticModel)-mesh(161x161)-dims(1x1)-flaws(4)-exx(0.1)-eyy(0.1)-reg(0.49)-inc(0.05)-step(0.01)/functions/p000014.npy"
-num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.5
-unitcell_mirror_x, unitcell_mirror_y = True, True    # dolfin.assemble(W) -> 0.015603893090432131
-# unitcell_mirror_x, unitcell_mirror_y = False, False  # dolfin.assemble(W) -> 0.01534135586913777
+# filename = "results_ktt/square_domain/date(1006_1044)-model(LinearElasticModel)-mesh(161x161)-dims(1x1)-flaws(4)-exx(0.1)-eyy(0.1)-reg(0.49)-inc(0.05)-step(0.01)/functions/p000014.npy"
+# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.5
+# unitcell_mirror_x, unitcell_mirror_y = True, True    # dolfin.assemble(W) -> 0.015603893090432131
+# # unitcell_mirror_x, unitcell_mirror_y = False, False  # dolfin.assemble(W) -> 0.01534135586913777
 
+
+filename = "results/square_domain/date(1006_2210)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(0.1)-eyy(0.1)-reg(0.48)-inc(0.05)-step(0.01)/functions/p000023.npy"
+num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.25
+unitcell_mirror_x, unitcell_mirror_y = True, True    # dolfin.assemble(W) -> 0.015603893090432131
 
 
 assert os.path.isfile(filename), f'No such file: \"{filename}\"'

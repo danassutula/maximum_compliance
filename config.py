@@ -2,7 +2,7 @@
 
 import numpy
 numpy.set_printoptions(
-    edgeitems = 4,
+    edgeitems = 5,
     threshold = 100,
     formatter = {'float' : '{: 13.6e}'.format},
     linewidth = 160)

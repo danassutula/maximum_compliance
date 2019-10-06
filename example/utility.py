@@ -219,11 +219,12 @@ class SimpleSubDomain(dolfin.SubDomain):
 def solve_compliance_maximization_problem(
     W, P, u, p, bcs_u,
     defect_nucleation_centers,
-    defect_nucleation_diameter,
-    phasefield_penalty_weight,
-    phasefield_collision_distance,
-    phasefield_iteration_stepsize,
-    phasefield_fraction_increment,
+    defect_nucleation_diameter, # At least several elements worth (e.g. 8)
+    phasefield_penalty_weight, # Depends on the form of penalty `P` but 0.4 to 0.5 is generally good
+    phasefield_collision_distance, # At least several elements worth (e.g. 8)
+    phasefield_iteration_stepsize, # Should be as small as computationally feasible
+    phasefield_fraction_increment, # Generally, does not need to be very small
+    minimum_phasefield_fraction,
     maximum_phasefield_fraction,
     minimum_energy_threshold,
     constrained_subdomain_functions=None,
@@ -285,6 +286,9 @@ def solve_compliance_maximization_problem(
 
     p.assign(sum(p_locals))
 
+    initial_phasefield_fraction = max(assemble(p*dx)/assemble(1*dx(mesh)),
+                                      minimum_phasefield_fraction)
+
     optimizer = optim.TopologyOptimizer(W, P, F, Cs, u, p, p_locals, bcs_u,
         function_to_call_at_each_phasefield_iteration)
 
@@ -292,8 +296,8 @@ def solve_compliance_maximization_problem(
 
     try:
 
-        phasefield_fraction_i = assemble(p*dx)/assemble(1*dx(mesh))
-        while phasefield_fraction_i < maximum_phasefield_fraction:
+        phasefield_fraction_i = initial_phasefield_fraction
+        while phasefield_fraction_i <= maximum_phasefield_fraction:
 
             try:
 
@@ -458,7 +462,7 @@ def uniform_extension_bcs(V, method="biaxial"):
             dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
             dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
             dolfin.DirichletBC(V.sub(0), ux_lhs, f'near(x[0],{x0}) && near(x[1],{y0})', method="pointwise"),
-            dolfin.DirichletBC(V.sub(0), ux_lhs, f'near(x[0],{x0}) && near(x[1],{y1})', method="pointwise"),
+            # dolfin.DirichletBC(V.sub(0), ux_lhs, f'near(x[0],{x0}) && near(x[1],{y1})', method="pointwise"), # Overconstrained
             ]
 
         def bcs_set_values(ux, uy):

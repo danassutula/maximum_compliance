@@ -9,21 +9,20 @@ University of Liberec, Czech Republic, 2018-2019
 import math
 import dolfin
 import numpy as np
-import scipy.linalg as linalg
 
 from dolfin import Constant
 from dolfin import Function
 from dolfin import assemble
-from dolfin import derivative
-from dolfin import interpolate
-from dolfin import grad
-from dolfin import dot
-from dolfin import dx
+
+from .dist import DistanceSolverPDE
+from .dist import DistanceSolverFMM
 
 from . import config
 logger = config.logger
 
 EPS = 1e-12
+
+DistanceSolver = DistanceSolverPDE
 
 
 class TopologyOptimizer:
@@ -71,19 +70,6 @@ class TopologyOptimizer:
             raise TypeError('Parameter `function_to_call_at_each_iteration` '
                             'must be callable without any arguments')
 
-        threshold = config.parameters_distance_solver['threshold']
-        viscosity = config.parameters_distance_solver['viscosity']
-        penalty   = config.parameters_distance_solver['penalty']
-
-        if not (isinstance(threshold, (float, int)) and 0.0 < threshold < 1.0):
-            raise TypeError('`config.parameters_distance_solver[\'threshold\']`')
-
-        if not (isinstance(viscosity, (float, int)) and viscosity > 0.0):
-            raise TypeError('`config.parameters_distance_solver[\'viscosity\']`')
-
-        if not (isinstance(penalty, (float, int)) and penalty > 0.0):
-            raise TypeError('`config.parameters_distance_solver[\'penalty\']`')
-
         self._V_u = u.function_space()
         self._V_p = p.function_space()
 
@@ -96,25 +82,22 @@ class TopologyOptimizer:
         self._d_arr_locals = None
 
         self._collision_distance = None
-
-        self._distance_solver = DistanceSolver(
-            self._V_p, threshold, viscosity, penalty)
-
+        self._distance_solver = DistanceSolver(self._V_p)
         self._initialize_local_phasefields(p_locals)
 
         self._J = J
         self._P = P
 
-        self._dJdp = derivative(J, p)
-        self._dPdp = derivative(P, p)
-        self._dFdu = derivative(F, u)
+        self._dJdp = dolfin.derivative(J, p)
+        self._dPdp = dolfin.derivative(P, p)
+        self._dFdu = dolfin.derivative(F, u)
 
         if isinstance(C, (tuple, list)):
             self._C = C if isinstance(C, tuple) else tuple(C)
-            self._dCdp = tuple(derivative(Ci, p) for Ci in C)
+            self._dCdp = tuple(dolfin.derivative(Ci, p) for Ci in C)
         else:
             self._C = (C,)
-            self._dCdp = (derivative(C, p),)
+            self._dCdp = (dolfin.derivative(C, p),)
 
         self._dCdp_arr = tuple(assemble(dCidp).get_local() for dCidp in self._dCdp)
         self._tol_C = tuple(np.abs(dCidp).sum()*EPS for dCidp in self._dCdp_arr)
@@ -155,11 +138,9 @@ class TopologyOptimizer:
         self._p_vec_locals = tuple(p_i.vector() for p_i in self._p_locals)
         self._d_arr_locals = np.zeros((len(self._p_locals), self._V_p.dim()))
 
-        self._initialize_phasefield_distances() # -> self._d_arr_locals (approximate)
-        self._solve_phasefield_distances() # -> self._d_arr_locals (correct solution)
-
-        if len(p_locals) == 1:
-            self._apply_collision_constraints = lambda p_arr : None
+        if len(self._p_locals) > 1:
+            self._initialize_phasefield_distances() # -> self._d_arr_locals (approximate)
+            self._solve_phasefield_distances() # -> self._d_arr_locals (correct solution)
 
 
     def optimize(self, stepsize, penalty_weight, collision_distance,
@@ -212,8 +193,9 @@ class TopologyOptimizer:
         if maximum_iterations < 0:
             raise ValueError('Require non-negative `maximum_iterations`')
 
-        if (self._d_arr_locals[:,0] == 0).all() or \
-           (self._d_arr_locals[:,0] == np.inf).all():
+        if len(self._p_locals) > 1 and (
+           (self._d_arr_locals[:,0] == 0).all() or
+           (self._d_arr_locals[:,0] == np.inf).all()):
             raise RuntimeError('Ill-defined phasefields.')
 
         weight_P = penalty_weight
@@ -224,6 +206,9 @@ class TopologyOptimizer:
 
         self._apply_phasefield_constraints(p_arr)
         self._assign_phasefield_values(p_arr)
+
+        solve_phasefield_distances = self._solve_phasefield_distances \
+            if len(self._p_locals) > 1 else lambda : None # Dummy callable
 
         dp_arr = 0.0
         J_cur = np.inf
@@ -241,7 +226,8 @@ class TopologyOptimizer:
             p_arr_prv = p_arr
             p_arr = p_arr + dp_arr
 
-            self._solve_phasefield_distances()
+            solve_phasefield_distances()
+
             self._apply_collision_constraints(p_arr)
             self._apply_phasefield_constraints(p_arr)
             self._assign_phasefield_values(p_arr)
@@ -328,9 +314,10 @@ class TopologyOptimizer:
 
     def _apply_collision_constraints(self, p_arr):
 
-        mask = (self._d_arr_locals < self._collision_distance).sum(0) > 1
-        s = np.sort(self._d_arr_locals[:,mask], 0)[1] / self._collision_distance
-        p_arr[mask] *= self._collision_smoothing_weight(s)
+        if len(self._p_locals) > 1:
+            mask = (self._d_arr_locals < self._collision_distance).sum(0) > 1
+            s = np.sort(self._d_arr_locals[:,mask], 0)[1] / self._collision_distance
+            p_arr[mask] *= self._collision_smoothing_weight(s)
 
 
     def _apply_phasefield_constraints(self, p_arr):
@@ -389,12 +376,16 @@ class TopologyOptimizer:
 
         self._p_vec_global[:] = p_arr
 
-        # Closest phasefield indices (at dof positions)
-        phasefield_dofmap = self._d_arr_locals.argmin(0)
+        if len(self._p_locals) > 1:
 
-        for i, p_vec_i in enumerate(self._p_vec_locals):
-            dofs_i = np.flatnonzero(phasefield_dofmap==i)
-            p_vec_i[:]=0.0; p_vec_i[dofs_i]=p_arr[dofs_i]
+            # Closest phasefield indices (at dof positions)
+            phasefield_dofmap = self._d_arr_locals.argmin(0)
+            for i, p_vec_i in enumerate(self._p_vec_locals):
+                dofs_i = np.flatnonzero(phasefield_dofmap==i)
+                p_vec_i[:]=0.0; p_vec_i[dofs_i]=p_arr[dofs_i]
+
+        else:
+            self._p_vec_locals[0][:] = p_arr
 
 
     @staticmethod
@@ -465,146 +456,3 @@ class TopologyOptimizer:
 
             else:
                 target[k] = source[k]
-
-
-class DistanceSolver:
-    def __init__(self, V, threshold, viscosity=1e-2, penalty=1e5):
-        '''
-        Parameters
-        ----------
-        V : dolfin.FunctionSpace
-            Function space for the distance function.
-        threshold : float
-            Threshold marking the zero-distance boundary.
-        viscosity: float or dolfin.Constant
-            Stabilization for the unique solution of the distance problem.
-        penalty: float or dolfin.Constant
-            Penalty for weakly enforcing the zero-distance boundary conditions.
-
-        '''
-
-        if not isinstance(V, dolfin.FunctionSpace):
-            raise TypeError('Parameter `V` must be a `dolfin.FunctionSpace`')
-
-        if not isinstance(threshold, float):
-            if not isinstance(threshold, int):
-                raise TypeError('Parameter `threshold`')
-            threshold = float(threshold)
-
-        if not isinstance(viscosity, Constant):
-            if not isinstance(viscosity, (float, int)):
-                raise TypeError('`Parameter `viscosity`')
-            viscosity = Constant(viscosity)
-
-        if not isinstance(penalty, Constant):
-            if not isinstance(penalty, (float, int)):
-                raise TypeError('Parameter `penalty`')
-            penalty = Constant(penalty)
-
-        self._threshold = threshold
-        self._viscosity = viscosity
-        self._penalty   = penalty
-
-        self._d = d = Function(V)
-        self._d_vec = d.vector()
-
-        mesh = V.mesh()
-
-        self._Q = dolfin.FunctionSpace(mesh, 'DG', 0)
-
-        x = mesh.coordinates()
-        l0 = (x.max(0)-x.min(0)).min()
-        he = mesh.hmax()
-
-        scaled_penalty = penalty / he
-        target_gradient = Constant(1.0)
-
-        self._mf = dolfin.MeshFunction('size_t', mesh, mesh.geometric_dimension())
-        self._dx_penalty = dx(subdomain_id=1, subdomain_data=self._mf, domain=mesh)
-
-        v0 = dolfin.TestFunction(V)
-        v1 = dolfin.TrialFunction(V)
-
-        lhs_F0 = l0*dot(grad(v0), grad(v1))*dx \
-            + scaled_penalty*v0*v1*self._dx_penalty
-
-        rhs_F0 = v0*target_gradient*dx
-
-        problem = dolfin.LinearVariationalProblem(lhs_F0, rhs_F0, d)
-        self._linear_solver = dolfin.LinearVariationalSolver(problem)
-        self._linear_solver.parameters["symmetric"] = True
-
-        F = v0*(grad(d)**2-target_gradient)*dx \
-            + viscosity*l0*dot(grad(v0), grad(d))*dx \
-            + scaled_penalty*v0*d*self._dx_penalty
-
-        J = derivative(F, d, v1)
-
-        problem = dolfin.NonlinearVariationalProblem(F, d, bcs=None, J=J)
-        self._nonlinear_solver = dolfin.NonlinearVariationalSolver(problem)
-        self._nonlinear_solver.parameters['nonlinear_solver'] = 'newton'
-        self._nonlinear_solver.parameters['symmetric'] = False
-
-        self._solve_initdist_problem = self._linear_solver.solve
-        self._solve_distance_problem = self._nonlinear_solver.solve
-
-    def set_threshold_value(self, value):
-        self._threshold = float(value)
-
-    def set_viscosity_value(self, value):
-        self._viscosity.assign(value)
-
-    def set_penalty_value(self, value):
-        self._penalty.assign(value)
-
-    def get_distance_function(self):
-        return self._d
-
-    def mark_zero_distance_cells(self, p):
-        '''Mark cells as zero-distance if the phasefield value
-        is greater than the threshold value `p_max * threshold`.'''
-
-        self._mf.array()[:] = np.array(
-            interpolate(p, self._Q).vector()
-            .get_local() > self._threshold, int)
-
-        return self._mf.array().any()
-
-    def compute_initdist_dofs(self, x):
-        self._solve_initdist_problem()
-        x[:] = self._d_vec.get_local()
-
-    def compute_distance_dofs(self, x):
-
-        self._d_vec[:] = x
-
-        try:
-            self._solve_distance_problem()
-        except RuntimeError:
-            logger.error('Could not solve distance problem; '
-                         'attempting to re-initialize and re-solve.')
-
-            self._solve_initdist_problem()
-
-            try:
-                self._solve_distance_problem()
-            except RuntimeError:
-                logger.error('Unable to solve distance problem; '
-                             'reusing the previous distance solution.')
-
-                return
-
-        x[:] = self._d_vec.get_local()
-
-    def compute_distance(self, p, init=True):
-        '''Compute distance to thresholded phasefield boundary.'''
-
-        if not self.mark_zero_distance_cells(p):
-            raise RuntimeError('Could not mark any zero-distance cells')
-
-        if init:
-            self._solve_initdist_problem()
-
-        self._solve_distance_problem()
-
-        return self._d
