@@ -92,42 +92,76 @@ if __name__ == "__main__":
         # "NeoHookeanModel",
         ]
 
+    # load_type = "vertical"
+    load_type = "biaxial"
     mean_axial_strains = [
-        [0.100, 0.100],
+        # [0.000, 0.100],
+        [0.200, 0.200],
         ]
 
-    delta = 1e-2
+    delta = 1e-10
     defect_nucleation_centers = [
         # np.array([[domain_x0, domain_y0]]), # Benchmark
+        # np.array([[domain_x0, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[(domain_x0+domain_x1)/2, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[domain_x0, domain_y0],
-        #           [domain_x1, domain_y1]]), # Benchmark
-        # np.array([[domain_x0, domain_y0],
-        #           [domain_x1, domain_y0],
-        #           [domain_x1, domain_y1],
-        #           [domain_x0, domain_y1]]), # Benchmark
-        # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x0+0.75*domain_L, domain_y1]]),
-        np.array([[domain_x0+0.25*domain_L, domain_y0],
-                  [domain_x1-0.25*domain_L, domain_y1],
-                  [domain_x1, domain_y0+0.25*domain_H],
-                  [domain_x0, domain_y1-0.25*domain_H]]),
-        ## np.array([[domain_x0+0.10*domain_L, domain_y0],
-        ##           [domain_x0+0.90*domain_L, domain_y1]]),
+        #           [domain_x1, domain_y1]]),
         # np.array([[domain_x0+delta, domain_y0],
         #           [domain_x1, domain_y0+delta],
         #           [domain_x1-delta, domain_y1],
         #           [domain_x0, domain_y1-delta]]),
+        # np.array([[domain_x0, domain_y0],
+        #           [domain_x1, domain_y0],
+        #           [domain_x0, domain_y1]]), # Not interesting (mesh_diagonal="right")
+        # np.array([[domain_x0+0.1, domain_y0],
+        #           [domain_x1-0.1, domain_y0],
+        #           [domain_x1, domain_y1-0.1],
+        #           [domain_x0, domain_y1-0.1]]), # Not interesting
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x0+0.75*domain_L, domain_y1],
+        #           [domain_x0, domain_y0+0.25*domain_H],
+        #           [domain_x1, domain_y0+0.75*domain_H]]), # Not Interesting
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x1, domain_y1-0.25*domain_H]]), # Not Interesting
+        np.array([[domain_x0+0.25*domain_L, domain_y0],
+                  [domain_x0+0.75*domain_L, domain_y1]]), # Interesting
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x1-0.25*domain_L, domain_y1],
+        #           [domain_x1, domain_y0+0.25*domain_H],
+        #           [domain_x0, domain_y1-0.25*domain_H]]), # Interesting
+        # np.array([[domain_x0+0.25*domain_L, domain_y0],
+        #           [domain_x1-0.25*domain_L, domain_y1],
+        #           [domain_x1, domain_y0+0.25*domain_H],
+        #           [domain_x0, domain_y1-0.25*domain_H],
+        #           [0.5*(domain_x0+domain_x1), 0.5*(domain_y0+domain_y1)]]), # Interesting
         ]
+
+    constrained_subdomain_functions = False
+    if constrained_subdomain_functions:
+        def constrained_subdomain_functions():
+            '''Returns a predicate function that evaluates to `True` if a point is
+            inside the subdomain where the phasefield fraction will be constrained.
+            '''
+
+            # eps = max(domain_L, domain_H) * EPS
+
+            inside_functions = [
+                lambda x: True,
+                ]
+
+            return inside_functions
 
     def compute_defect_nucleation_diameter(mesh_element_size):
         "Compute the diameter using the mesh element size."
         return mesh_element_size * (1+EPS) * 10
 
     phasefield_penalty_weight = [
+        # 0.400,
         # 0.450,
-        0.475,
-        # 0.485,
+        # 0.460,
+        # 0.470,
+        0.480,
+        # 0.490,
         # 0.500,
         ]
 
@@ -140,9 +174,9 @@ if __name__ == "__main__":
     phasefield_fraction_increment = [
         # 0.200,
         # 0.100,
-        0.050,
-        # 0.010,
-        # 0.005,
+        # 0.050,
+        # 0.025,
+        0.010,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
@@ -152,8 +186,9 @@ if __name__ == "__main__":
         0.010,
         ]
 
-    maximum_phasefield_fraction = 0.5
-    minimum_energy_fraction = 1e-3
+    minimum_phasefield_fraction = 0.10
+    maximum_phasefield_fraction = 0.30
+    minimum_energy_fraction = 1e-4
 
     ### Discretization parameters
 
@@ -172,6 +207,7 @@ if __name__ == "__main__":
     # mesh_diagonal = "left/right"
     mesh_diagonal = "crossed"
     # mesh_diagonal = "left"
+    # mesh_diagonal = "right"
 
     displacement_degree = 1
     phasefield_degree = 1
@@ -214,13 +250,9 @@ if __name__ == "__main__":
             mean_axial_strains_i[1] * domain_H/2,
             ]
 
-        ### Mesh
-
         mesh = example.utility.rectangle_mesh(domain_p0, domain_p1,
             num_elements_on_edges_i[0], num_elements_on_edges_i[1],
             mesh_diagonal)
-
-        ### Boundaries
 
         boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
             example.utility.boundaries_of_rectangle_mesh(mesh)
@@ -295,7 +327,7 @@ if __name__ == "__main__":
         pk1 = rho * pk1_0
         pk2 = rho * pk2_0
 
-        ### Objective functionals
+        ### Cost functionals
 
         # Potential energy (strain energy only)
         W = psi * dx
@@ -306,7 +338,7 @@ if __name__ == "__main__":
         # Variational form of equilibrium
         F = derivative(W, u)
 
-        ### Solve for undamaged material
+        ### Solving for the undamaged material (reference solution)
 
         dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
         W_undamaged, u_arr_undamaged = dolfin.assemble(W), u.vector().get_local()
@@ -320,7 +352,7 @@ if __name__ == "__main__":
             phasefield_iteration_stepsize_i,
             ) in inner_loop_parameters:
 
-            problem_start_time = time.time()
+            problem_start_time = time.perf_counter()
 
             defect_nucleation_diameter_i = \
                 compute_defect_nucleation_diameter(mesh.hmax())
@@ -401,6 +433,11 @@ if __name__ == "__main__":
             _solution_writer_function_for_each_phasefield_fraction = None # write_solutions
             _solution_writer_function_for_each_phasefield_iteration = write_solutions_periodic
 
+            if constrained_subdomain_functions:
+                constrained_subdomain_functions_i = constrained_subdomain_functions()
+            else:
+                constrained_subdomain_functions_i = None
+
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
                 example.utility.solve_compliance_maximization_problem(
@@ -414,7 +451,7 @@ if __name__ == "__main__":
                     maximum_phasefield_fraction,
                     minimum_energy_threshold,
                     _solution_writer_function_for_each_phasefield_fraction,
-                    _solution_writer_function_for_each_phasefield_iteration
+                    _solution_writer_function_for_each_phasefield_iteration,
                     )
 
             if _solution_writer_function_for_each_phasefield_fraction is None:
@@ -527,7 +564,7 @@ if __name__ == "__main__":
             logger.info("Finished solving problem\n\t"
                 + problem_title.replace('-','\n\t'))
 
-            problem_finish_time = time.time()
+            problem_finish_time = time.perf_counter()
             problem_elapsed_time = problem_finish_time - problem_start_time
 
             problem_elapsed_time_readable = {
