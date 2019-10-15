@@ -289,8 +289,8 @@ def solve_compliance_maximization_problem(
     initial_phasefield_fraction = max(assemble(p*dx)/assemble(1*dx(mesh)),
                                       minimum_phasefield_fraction)
 
-    optimizer = optim.TopologyOptimizer(W, P, F, Cs, u, p, p_locals, bcs_u,
-        function_to_call_at_each_phasefield_iteration)
+    optimizer = optim.TopologyOptimizer(W, P, F, Cs, u, p, p_locals,
+        bcs_u, function_to_call_at_each_phasefield_iteration)
 
     iterations_failed = False
 

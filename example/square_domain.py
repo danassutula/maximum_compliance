@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # Write solutions every number of solver iterations
     # (All last solutions will be written automatically)
 
-    results_writing_period = 200
+    results_writing_period = 100
     write_phasefield_pvd = True
     write_phasefield_npy = True
     write_displacements_pvd = False
@@ -88,15 +88,15 @@ if __name__ == "__main__":
     domain_H = domain_y1 - domain_y0
 
     material_model_name = [
-        "LinearElasticModel",
-        # "NeoHookeanModel",
+        # "LinearElasticModel",
+        "NeoHookeanModel",
         ]
 
     # load_type = "vertical"
     load_type = "biaxial"
     mean_axial_strains = [
         # [0.000, 0.100],
-        [0.100, 0.100],
+        [0.200, 0.200],
         ]
 
     delta = 1e-10
@@ -106,10 +106,10 @@ if __name__ == "__main__":
         # np.array([[(domain_x0+domain_x1)/2, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[domain_x0, domain_y0],
         #           [domain_x1, domain_y1]]),
-        np.array([[domain_x0+delta, domain_y0],
-                  [domain_x1, domain_y0+delta],
-                  [domain_x1-delta, domain_y1],
-                  [domain_x0, domain_y1-delta]]),
+        # np.array([[domain_x0+delta, domain_y0],
+        #           [domain_x1, domain_y0+delta],
+        #           [domain_x1-delta, domain_y1],
+        #           [domain_x0, domain_y1-delta]]),
         # np.array([[domain_x0, domain_y0],
         #           [domain_x1, domain_y0],
         #           [domain_x0, domain_y1]]), # Not interesting (mesh_diagonal="right")
@@ -158,9 +158,9 @@ if __name__ == "__main__":
     phasefield_penalty_weight = [
         # 0.400,
         # 0.450,
-        0.460,
+        # 0.460,
         # 0.470,
-        # 0.480,
+        0.480,
         # 0.490,
         # 0.500,
         ]
@@ -196,10 +196,10 @@ if __name__ == "__main__":
         # 40,
         # 41,
         # 80,
-        # 81,
+        81,
         # 121,
         # 160,
-        161,
+        # 161,
         # 320,
         # 321,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
@@ -453,7 +453,8 @@ if __name__ == "__main__":
                     minimum_energy_threshold,
                     constrained_subdomain_functions_i,
                     _solution_writer_function_for_each_phasefield_fraction,
-                    _solution_writer_function_for_each_phasefield_iteration
+                    _solution_writer_function_for_each_phasefield_iteration,
+                    bcs_set_values
                     )
 
             if _solution_writer_function_for_each_phasefield_fraction is None:

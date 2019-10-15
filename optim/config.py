@@ -11,13 +11,16 @@ parameters_topology_solver = {
     }
 
 parameters_distance_solver = {
-    'method': 'variational',
+    # 'method': 'variational',
+    'method': 'algebraic',
     'variational_solver': {
-        'threshold': 1/3, # Threshold marking the zero-distance boundary
-        'viscosity': 1e-2, # Diffusive stabilization for solution uniqueness
+        'threshold': 1/3, # Threshold marking the zero-distance subdomain
+        'viscosity': 5e-3, # Diffusive stabilization for solution uniqueness
         'penalty': 1e5, # Penalty for weakly enforcing the zero-distance BC's
         },
-    'fmm_solver': {}
+    'algebraic_solver': {
+        'threshold': 1/3, # Threshold marking the zero-distance subdomain
+        },
     }
 
 parameters_nonlinear_solver = {

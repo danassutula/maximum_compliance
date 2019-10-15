@@ -14,18 +14,15 @@ from dolfin import Constant
 from dolfin import Function
 from dolfin import assemble
 
-from .dist import DistanceSolverPDE
-from .dist import DistanceSolverFMM
-
 from . import config
+from . import dist
+
 logger = config.logger
-
 EPS = 1e-12
-
-DistanceSolver = DistanceSolverPDE
 
 
 class TopologyOptimizer:
+
     def __init__(self, J, P, F, C, u, p, p_locals, bcs_u,
                  function_to_call_at_each_iteration=None):
         '''Minimize the objective functional `J(u(p),p)` (e.g. potential energy
@@ -75,15 +72,23 @@ class TopologyOptimizer:
 
         self._u = u
         self._p = p
-        self._p_locals = None
+        self._p_vec = p.vector()
 
-        self._p_vec_global = p.vector()
+        self._p_locals = None
+        self._d_locals = None
+
         self._p_vec_locals = None
         self._d_arr_locals = None
 
         self._collision_distance = None
-        self._distance_solver = DistanceSolver(self._V_p)
+
         self._initialize_local_phasefields(p_locals)
+        assert self._p_locals is not None
+        assert self._p_vec_locals is not None
+
+        self._initialize_phasefield_distance_solver()
+        assert self._d_locals is not None
+        assert self._d_arr_locals is not None
 
         self._J = J
         self._P = P
@@ -125,22 +130,32 @@ class TopologyOptimizer:
             try:
                 self._p_locals = tuple(p_locals)
             except:
-                self._p_locals = None
-
-        if self._p_locals is None:
-            raise TypeError('Expected parameter `p_locals` to be '
-                            'a (sequence of) `dolfin.Function`(s)')
+                raise TypeError('Parameter `p_locals` must be a '
+                                '(sequence of) `dolfin.Function`(s)')
 
         if not all(p_i.function_space() == self._V_p for p_i in self._p_locals):
-            raise TypeError('Parameter `p_locals` must constrain `dolfin.Function`s '
+            raise TypeError('Parameter `p_locals` must contain `dolfin.Function`s '
                             'that are members of the same function space as `p`')
 
         self._p_vec_locals = tuple(p_i.vector() for p_i in self._p_locals)
-        self._d_arr_locals = np.zeros((len(self._p_locals), self._V_p.dim()))
+
+
+    def _initialize_phasefield_distance_solver(self):
+
+        if config.parameters_distance_solver['method'] == 'variational':
+            factory_distance_solver = dist.variational_distance_solver
+        elif config.parameters_distance_solver['method'] == 'algebraic':
+            factory_distance_solver = dist.algebraic_distance_solver
+        else:
+            raise ValueError('`config.parameters_distance_solver[\'method\']`')
+
+        assert isinstance(self._p_locals, tuple)
+
+        self._solve_phasefield_distances, self._d_locals, self._d_arr_locals = \
+            factory_distance_solver(self._p_locals)
 
         if len(self._p_locals) > 1:
-            self._initialize_phasefield_distances() # -> self._d_arr_locals (approximate)
-            self._solve_phasefield_distances() # -> self._d_arr_locals (correct solution)
+            self._solve_phasefield_distances()
 
 
     def optimize(self, stepsize, penalty_weight, collision_distance,
@@ -284,34 +299,6 @@ class TopologyOptimizer:
         return num_iterations, cost_values
 
 
-    def _initialize_phasefield_distances(self):
-        '''Initialize distances to local phasefields.'''
-
-        compute_dofs = self._distance_solver.compute_initdist_dofs
-        mark_cells = self._distance_solver.mark_zero_distance_cells
-
-        for p_i, d_arr_i in zip(self._p_locals, self._d_arr_locals):
-
-            if mark_cells(p_i):
-                compute_dofs(d_arr_i)
-            else:
-                d_arr_i[:] = np.inf
-
-
-    def _solve_phasefield_distances(self):
-        '''Update distances to local phasefields.'''
-
-        compute_dofs = self._distance_solver.compute_distance_dofs
-        mark_cells = self._distance_solver.mark_zero_distance_cells
-
-        for p_i, d_arr_i in zip(self._p_locals, self._d_arr_locals):
-
-            if mark_cells(p_i):
-                compute_dofs(d_arr_i)
-            else:
-                d_arr_i[:] = np.inf
-
-
     def _apply_collision_constraints(self, p_arr):
 
         if len(self._p_locals) > 1:
@@ -330,7 +317,7 @@ class TopologyOptimizer:
 
         '''
 
-        p0_arr = self._p_vec_global.get_local()
+        p0_arr = self._p_vec.get_local()
 
         for C_i, dCdp_i, dp_C_i, tol_C_i in zip(
             self._C, self._dCdp_arr, self._dp_C_arr, self._tol_C):
@@ -374,7 +361,7 @@ class TopologyOptimizer:
 
     def _assign_phasefield_values(self, p_arr):
 
-        self._p_vec_global[:] = p_arr
+        self._p_vec[:] = p_arr
 
         if len(self._p_locals) > 1:
 
