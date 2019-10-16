@@ -33,7 +33,7 @@ parameters_nonlinear_solver = {
         'convergence_criterion': 'residual',
         'error_on_nonconvergence': True,
         'linear_solver': 'default',
-        'maximum_iterations': 25,
+        'maximum_iterations': 10, # 25
         'preconditioner': 'default',
         'relative_tolerance': 1e-12,
         'relaxation_parameter': 1.0,
@@ -44,7 +44,7 @@ parameters_nonlinear_solver = {
         'error_on_nonconvergence': True,
         'line_search': 'bt', # 'basic' | 'bt'
         'linear_solver': 'lu',
-        'maximum_iterations': 50,
+        'maximum_iterations': 20, # 50
         'maximum_residual_evaluations': 2000,
         'method': 'default',
         'preconditioner': 'default',

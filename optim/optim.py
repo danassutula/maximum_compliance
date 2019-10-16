@@ -4,6 +4,12 @@ a hyper-elastic solid.
 By Danas Sutula
 University of Liberec, Czech Republic, 2018-2019
 
+
+Notes
+-----
+* Assumining to never have to solve the adjoint problem because the objective
+functional to be minimized corresponds to the energy of the deformation.
+
 '''
 
 import math
@@ -23,8 +29,7 @@ EPS = 1e-12
 
 class TopologyOptimizer:
 
-    def __init__(self, J, P, F, C, u, p, p_locals, bcs_u,
-                 function_to_call_at_each_iteration=None):
+    def __init__(self, J, P, C, p, p_locals, equilibrium_solve, equilibrium_write=None):
         '''Minimize the objective functional `J(u(p),p)` (e.g. potential energy
         of a hyper-elastic solid) with respect to the phasefield `p` subject to
         satisfying the weak-form `F(u(p),p)` (e.g. static equilibrium) and the
@@ -40,8 +45,6 @@ class TopologyOptimizer:
             roughness of the phasefield `p`. The phasefield advance direction
             will be determined as the weighted-average direction of the cost
             gradient direction and the phasefield penalty gradient direction.
-        F : dolfin.Form
-            Variational problem, i.e. `F(u,p; v)==0` for all `v`.
         C : (sequence of) dolfin.Form(s)
             Linear phasefield equality-constraint functional(s) that solely
             depend on the phasefield `p`.
@@ -50,27 +53,27 @@ class TopologyOptimizer:
         p_locals : (sequence of) dolfin.Function(s)
             Local phasefield functions. The sum of the local phasefield functions
             will be equivelent to the global phasefield function `p`.
-        u : dolfin.Function
-            The displacement function or a mixed field function.
-        bcs_u : (sequence of) dolfin.DirichletBC's
-            The dirichlet boundary conditions for the displacement or the mixed
-            field function.
-        function_to_call_at_each_iteration (optional): function()
-            This function shall be responsible for recording some state variables
-            during the solver iterations.
+        equilibrium_solve : function()
+            To be called with each iteration for solving the equilibrium problem.
+        equilibrium_write (optional): function()
+            To be called with each iteration for writing some solution variables.
 
         '''
 
-        if function_to_call_at_each_iteration is None:
-            function_to_call_at_each_iteration = lambda : None
-        elif not callable(function_to_call_at_each_iteration):
-            raise TypeError('Parameter `function_to_call_at_each_iteration` '
+        if not callable(equilibrium_solve):
+            raise TypeError('Parameter `equilibrium_solve` must '
+                            'be callable without any arguments')
+
+        if equilibrium_write is None:
+            equilibrium_write = lambda : None
+
+        elif not callable(equilibrium_write):
+            raise TypeError('Parameter `equilibrium_write` '
                             'must be callable without any arguments')
 
-        self._V_u = u.function_space()
-        self._V_p = p.function_space()
+        self.equilibrium_solve = equilibrium_solve
+        self.equilibrium_write = equilibrium_write
 
-        self._u = u
         self._p = p
         self._p_vec = p.vector()
 
@@ -95,7 +98,6 @@ class TopologyOptimizer:
 
         self._dJdp = dolfin.derivative(J, p)
         self._dPdp = dolfin.derivative(P, p)
-        self._dFdu = dolfin.derivative(F, u)
 
         if isinstance(C, (tuple, list)):
             self._C = C if isinstance(C, tuple) else tuple(C)
@@ -108,16 +110,7 @@ class TopologyOptimizer:
         self._tol_C = tuple(np.abs(dCidp).sum()*EPS for dCidp in self._dCdp_arr)
         self._dp_C_arr = self._constraint_correction_vectors(self._dCdp_arr)
 
-        self._nonlinear_solver = dolfin.NonlinearVariationalSolver(
-            dolfin.NonlinearVariationalProblem(F, u, bcs_u, self._dFdu))
-        self.solve_equilibrium_problem = self._nonlinear_solver.solve
-
-        self._update_parameters(
-            self._nonlinear_solver.parameters,
-            config.parameters_nonlinear_solver)
-
         self.parameters_topology_solver = config.parameters_topology_solver.copy()
-        self.function_to_call_at_each_iteration = function_to_call_at_each_iteration
 
 
     def _initialize_local_phasefields(self, p_locals):
@@ -133,7 +126,9 @@ class TopologyOptimizer:
                 raise TypeError('Parameter `p_locals` must be a '
                                 '(sequence of) `dolfin.Function`(s)')
 
-        if not all(p_i.function_space() == self._V_p for p_i in self._p_locals):
+        V = self._p.function_space()
+
+        if not all(p_i.function_space() == V for p_i in self._p_locals):
             raise TypeError('Parameter `p_locals` must contain `dolfin.Function`s '
                             'that are members of the same function space as `p`')
 
@@ -249,7 +244,8 @@ class TopologyOptimizer:
 
             ### Solve
 
-            self.solve_equilibrium_problem()
+            self.equilibrium_solve()
+            self.equilibrium_write()
 
             J_prv = J_cur
             J_cur = assemble(self._J)
@@ -269,25 +265,33 @@ class TopologyOptimizer:
                 f'|dp|_inf:{norm_dp: 8.2e}'
                 )
 
-            self.function_to_call_at_each_iteration()
-
             if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
                 logger.info('Reached minimum number of convergences')
                 break
 
             ### Estimate phasefield change
 
-            x_J = assemble(self._dJdp).get_local()
-            x_P = assemble(self._dPdp).get_local()
+            dJdp = assemble(self._dJdp).get_local()
+            dPdp = assemble(self._dPdp).get_local()
 
-            # Orthogonalize with respect to (orthogonal) constraints
+            # Orthogonalize with respect to constraints
             for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
-                x_J -= dp_C_i * (x_J.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
-                x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                dJdp -= dp_C_i * (dJdp.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                dPdp -= dp_C_i * (dPdp.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+
+            norm_dJdp = math.sqrt(dJdp.dot(dJdp))
+            norm_dPdp = math.sqrt(dPdp.dot(dPdp))
+
+            if norm_dJdp == 0.0:
+                logger.error('Cost gradient is zero')
+                break
+
+            if norm_dPdp == 0.0:
+                raise RuntimeError('Penalty gradient is zero')
 
             # Weighted-average phasefield advance direction
-            dp_arr = x_J * (-weight_J/math.sqrt(x_J.dot(x_J))) \
-                   + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
+            dp_arr = dJdp * (-weight_J / norm_dJdp) \
+                   + dPdp * (-weight_P / norm_dPdp)
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
 
@@ -420,26 +424,3 @@ class TopologyOptimizer:
     def _collision_smoothing_weight(s):
         '''Regularized step function.'''
         return 3*s**2 - 2*s**3
-
-
-    @classmethod
-    def _update_parameters(cls, target, source):
-        '''Update dict-like `target` with dict-like `source`.'''
-
-        for k in source.keys():
-
-            if k not in target.keys():
-                raise KeyError(k)
-
-            if hasattr(target[k], 'keys'):
-
-                if not hasattr(source[k], 'keys'):
-                    raise TypeError(f'`source[{k}]` must be dict-like')
-                else:
-                    cls._update_parameters(target[k], source[k])
-
-            elif hasattr(source[k], 'keys'):
-                raise TypeError(f'`source[{k}]` can not be dict-like')
-
-            else:
-                target[k] = source[k]

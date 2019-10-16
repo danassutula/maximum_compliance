@@ -20,13 +20,14 @@ EPS = 1e-12
 
 
 def solve_compliance_maximization_problem(
-    W, P, u, p, bcs_u,
+    W, P, p, equilibrium_solve,
     defect_nucleation_centers,
     defect_nucleation_diameter,
     phasefield_penalty_weight,
     phasefield_collision_distance,
     phasefield_iteration_stepsize,
     phasefield_fraction_increment,
+    minimum_phasefield_fraction,
     maximum_phasefield_fraction,
     minimum_energy_threshold,
     function_to_call_at_each_phasefield_fraction=None,
@@ -38,12 +39,8 @@ def solve_compliance_maximization_problem(
         Energy (`W(u(p), p)`) to be minimized.
     P : dolfin.Form
         Phasefield penalty (`P(p)`) to be minimized.
-    u : dolfin.Function
-        Displacement function or a mixed function.
     p : dolfin.Function
         Phasefield function (scalar-valued).
-    bcs_u : (list of) dolfin.DirichletBC(s), or None, or an empty list
-        Sequence of Dirichlet boundary conditions for `u`.
 
     '''
 
@@ -57,9 +54,6 @@ def solve_compliance_maximization_problem(
     energy_vs_phasefield = []
     phasefield_fractions = []
 
-    # Variational form of equilibrium
-    F = dolfin.derivative(W, u)
-
     # Phasefield target fraction
     p_mean_target = Constant(0.0)
 
@@ -68,19 +62,20 @@ def solve_compliance_maximization_problem(
 
     V_p = p.function_space()
 
-    p_locals = make_defect_like_phasefield_array(
-        V_p, defect_nucleation_centers, r=0.5*defect_nucleation_diameter)
+    p_locals = make_defect_like_phasefield_array(V_p,
+        defect_nucleation_centers, r=0.5*defect_nucleation_diameter)
 
     p.assign(sum(p_locals))
 
-    optimizer = optim.TopologyOptimizer(W, P, F, C, u, p, p_locals, bcs_u,
-        function_to_call_at_each_phasefield_iteration)
+    optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
+        equilibrium_write=function_to_call_at_each_phasefield_iteration)
 
     iterations_failed = False
 
     try:
 
-        phasefield_fraction_i = assemble(p*dx) / assemble(1*dx(V_p.mesh()))
+        phasefield_fraction_i = max(minimum_phasefield_fraction,
+            assemble(p*dx) / assemble(1*dx(V_p.mesh())))
 
         while phasefield_fraction_i < maximum_phasefield_fraction:
 
@@ -126,6 +121,95 @@ def solve_compliance_maximization_problem(
     return iterations_failed, energy_vs_iterations, \
            energy_vs_phasefield, phasefield_fractions, \
            optimizer, p_locals, p_mean_target
+
+
+def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
+    '''Nonlinear solver for the hyper-elastic equilibrium problem.
+
+    F : dolfin.Form
+        Variational form of equilibrium.
+    u : dolfin.Function
+        Displacement function (or a mixed field function).
+    bcs : (sequence of) dolfin.DirichletBC's
+        Dirichlet boundary conditions.
+    bcs_set_values : function
+        Called with elements of `bcs_values`.
+    bcs_values : numpy.ndarray (2D)
+        Sequence of displacement values.
+
+    '''
+
+    if not isinstance(bcs_values, np.ndarray) or bcs_values.ndim != 2:
+        raise TypeError('Parameter `bcs_values` must be a 2D `numpy.ndarray`')
+
+    try:
+        bcs_set_values(bcs_values[-1])
+    except:
+        logger.error('Unable to set Dirichlet boundary conditions')
+        raise
+
+    dFdu = dolfin.derivative(F, u)
+
+    nonlinear_solver = dolfin.NonlinearVariationalSolver(
+        dolfin.NonlinearVariationalProblem(F, u, bcs, dFdu))
+
+    update_parameters(nonlinear_solver.parameters,
+                      config.parameters_nonlinear_solver)
+
+    def equilibrium_solve():
+
+        try:
+            nonlinear_solver.solve()
+        except RuntimeError:
+            logger.error('Could not solve equilibrium problem; '
+                         'Trying to re-load incrementally.')
+
+            nonlocal bcs_values
+            u.vector()[:] = 0.0
+            u_arr_backup = None
+            
+            try:
+                for i, values_i in enumerate(bcs_values):
+                    logger.info(f'Solving for load {values_i}')
+
+                    bcs_set_values(values_i)
+                    nonlinear_solver.solve()
+
+                    u_arr_backup = u.vector().get_local()
+
+            except:
+                logger.error('Could not solve equilibrium problem for load '
+                             f'{values_i}; assuming previous load value.')
+
+                if u_arr_backup is None:
+                    raise RuntimeError('Previous load value is not available')
+
+                u.vector()[:] = u_arr_backup
+                bcs_values = bcs_values[:i]
+
+    return equilibrium_solve
+
+
+def update_parameters(target, source):
+    '''Update dict-like `target` with dict-like `source`.'''
+
+    for k in source.keys():
+
+        if k not in target.keys():
+            raise KeyError(k)
+
+        if hasattr(target[k], 'keys'):
+
+            if not hasattr(source[k], 'keys'):
+                raise TypeError(f'`source[{k}]` must be dict-like')
+            else:
+                update_parameters(target[k], source[k])
+
+        elif hasattr(source[k], 'keys'):
+            raise TypeError(f'`source[{k}]` can not be dict-like')
+
+        else:
+            target[k] = source[k]
 
 
 def make_parameter_combinations(*parameters):
@@ -347,7 +431,8 @@ def uniform_extension_bcs(V):
         dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
         ]
 
-    def bcs_set_values(ux, uy):
+    def bcs_set_values(ux, uy=None):
+        if uy is None: ux, uy = ux
         uy_bot.assign(-uy)
         ux_rhs.assign( ux)
         uy_top.assign( uy)
