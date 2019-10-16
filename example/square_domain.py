@@ -36,30 +36,20 @@ if not os.path.isdir(RESULTS_OUTDIR_PARENT):
 SAFE_TO_REMOVE_FILE_TYPES = \
     ('.out', '.npy', '.pvd', '.vtu', '.png', '.svg', '.eps', '.pdf')
 
-optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'newton'
-# optim.config.parameters_nonlinear_solver['nonlinear_solver'] = 'snes'
-
 
 def phasefield_penalty(p):
+    '''For limiting sharp gradients.'''
     return dolfin.grad(p)**2
 
-def material_integrity(p, rho_min=1e-5):
-    '''Material integrity given the value of phasefield.
 
-    Notes
-    -----
-    The returned value should be in range [rho_min, 1].
+def material_integrity(p, minimum_value=1e-5):
+    '''Material integrity from phasefield `p`.'''
 
-    '''
-
-    # Material degradation exponent (`>=2`)
-    # beta = 2 # Iteration progress is slow, reaches "fully-dagmed" level easily
+    # Degradation exponent
     beta = 3
-    # beta = 4 # Faster iteration progress but can not quite reach "fully-damage" level easily
 
-    return rho_min + (1.0-rho_min) * ((1.0+EPS)-p) ** beta
-
-    # return 1.0 - (3.0*p**2 - 2.0*p**3)
+    assert beta >= 2
+    return minimum_value + (1.0-minimum_value) * ((1.0+EPS)-p) ** beta
 
 
 if __name__ == "__main__":
@@ -70,7 +60,7 @@ if __name__ == "__main__":
     # Write solutions every number of solver iterations
     # (All last solutions will be written automatically)
 
-    results_writing_period = 100
+    results_writing_period = 200
     write_phasefield_pvd = True
     write_phasefield_npy = True
     write_displacements_pvd = False
@@ -88,16 +78,18 @@ if __name__ == "__main__":
     domain_H = domain_y1 - domain_y0
 
     material_model_name = [
-        "LinearElasticModel",
-        # "NeoHookeanModel",
+        # "LinearElasticModel",
+        "NeoHookeanModel",
         ]
 
     # load_type = "vertical"
     load_type = "biaxial"
     mean_axial_strains = [
         # [0.000, 0.100],
-        [0.200, 0.200],
+        [0.500, 0.500],
         ]
+
+    num_load_increments = 20
 
     delta = 1e-10
     defect_nucleation_centers = [
@@ -136,21 +128,6 @@ if __name__ == "__main__":
         #           [0.5*(domain_x0+domain_x1), 0.5*(domain_y0+domain_y1)]]), # Interesting
         ]
 
-    constrained_subdomain_functions = False
-    if constrained_subdomain_functions:
-        def constrained_subdomain_functions():
-            '''Returns a predicate function that evaluates to `True` if a point is
-            inside the subdomain where the phasefield fraction will be constrained.
-            '''
-
-            # eps = max(domain_L, domain_H) * EPS
-
-            inside_functions = [
-                lambda x: True,
-                ]
-
-            return inside_functions
-
     def compute_defect_nucleation_diameter(mesh_element_size):
         "Compute the diameter using the mesh element size."
         return mesh_element_size * (1+EPS) * 10
@@ -172,18 +149,16 @@ if __name__ == "__main__":
 
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
-        # 0.200,
-        # 0.100,
         # 0.050,
-        # 0.025,
-        0.010,
+        0.025,
+        # 0.010,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
         # 0.050,
-        # 0.025,
-        0.010,
+        0.025,
+        # 0.010,
         ]
 
     minimum_phasefield_fraction = 0.10
@@ -196,10 +171,10 @@ if __name__ == "__main__":
         # 40,
         # 41,
         # 80,
-        81,
+        # 81,
         # 121,
         # 160,
-        # 161,
+        161,
         # 320,
         # 321,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
@@ -245,10 +220,10 @@ if __name__ == "__main__":
         elif len(mean_axial_strains_i) != 2:
             raise TypeError
 
-        boundary_displacements_i = [
-            mean_axial_strains_i[0] * domain_L/2,
-            mean_axial_strains_i[1] * domain_H/2,
-            ]
+        boundary_displacement_values_i = np.stack((
+            np.linspace(0.0, mean_axial_strains_i[0] * domain_L/2, num_load_increments+1),
+            np.linspace(0.0, mean_axial_strains_i[1] * domain_H/2, num_load_increments+1)
+            ), axis=1)[1:,:]
 
         mesh = example.utility.rectangle_mesh(domain_p0, domain_p1,
             num_elements_on_edges_i[0], num_elements_on_edges_i[1],
@@ -298,9 +273,6 @@ if __name__ == "__main__":
 
         bcs, bcs_set_values = example.utility.uniform_extension_bcs(V_u)
 
-        bcs_set_values(ux=boundary_displacements_i[0],
-                       uy=boundary_displacements_i[1])
-
         ### Material model
 
         if material_model_name_i == "LinearElasticModel":
@@ -335,14 +307,21 @@ if __name__ == "__main__":
         # Phasefield regularization
         P = phi * dx
 
-        # Variational form of equilibrium
-        F = derivative(W, u)
-
         ### Solving for the undamaged material (reference solution)
 
-        dolfin.solve(F==0, u, bcs, solver_parameters={"nonlinear_solver": "snes"})
-        W_undamaged, u_arr_undamaged = dolfin.assemble(W), u.vector().get_local()
-        minimum_energy_threshold = minimum_energy_fraction * W_undamaged
+        # Equilibrium variational form
+        F = dolfin.derivative(W, u)
+
+        equilibrium_solve = example.utility.equilibrium_solver(
+            F, u, bcs, bcs_set_values, boundary_displacement_values_i)
+
+        # Solve for undamaged material
+        equilibrium_solve()
+
+        W_undamaged = dolfin.assemble(W)
+        u_arr_undamaged = u.vector().get_local()
+
+        minimum_energy_for_stopping = minimum_energy_fraction * W_undamaged
 
         for (
             defect_nucleation_centers_i,
@@ -433,26 +412,25 @@ if __name__ == "__main__":
             _solution_writer_function_for_each_phasefield_fraction = None # write_solutions
             _solution_writer_function_for_each_phasefield_iteration = write_solutions_periodic
 
-            if constrained_subdomain_functions:
-                constrained_subdomain_functions_i = constrained_subdomain_functions()
-            else:
-                constrained_subdomain_functions_i = None
-
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_fractions, topology_optimizer, p_locals, p_mean_target = \
                 example.utility.solve_compliance_maximization_problem(
-                    W, P, u, p, bcs,
+                    W, P, p, equilibrium_solve,
                     defect_nucleation_centers_i,
                     defect_nucleation_diameter_i,
                     phasefield_penalty_weight_i,
                     phasefield_collision_distance_i,
                     phasefield_iteration_stepsize_i,
                     phasefield_fraction_increment_i,
+                    minimum_phasefield_fraction,
                     maximum_phasefield_fraction,
-                    minimum_energy_threshold,
+                    minimum_energy_for_stopping,
                     _solution_writer_function_for_each_phasefield_fraction,
                     _solution_writer_function_for_each_phasefield_iteration,
                     )
+
+            if solver_iterations_failed and np.isnan(u.vector().get_local()).any():
+                u.vector()[:] = 0.0
 
             if _solution_writer_function_for_each_phasefield_fraction is None:
                 write_solutions()
@@ -467,6 +445,7 @@ if __name__ == "__main__":
                 [W_j / W_undamaged for W_j in energy_vs_phasefield]
 
             material_fraction = dolfin.project(rho, V_p)
+
             optim.filter.apply_diffusive_smoothing(material_fraction, 1e-5)
             optim.filter.apply_interval_bounds(material_fraction, 0.0, 1.0)
 
