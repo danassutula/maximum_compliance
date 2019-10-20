@@ -127,7 +127,9 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     '''Nonlinear solver for the hyper-elastic equilibrium problem.
 
     F : dolfin.Form
-        Variational form of equilibrium.
+        Variational form of equilibrium, i.e. F(u;v)==0 forall v. Usually `F`
+        is obtained by taking the derivative of the potential energy `W`, e.g.
+        `F = dolfin.derivative(W, u)`
     u : dolfin.Function
         Displacement function (or a mixed field function).
     bcs : (sequence of) dolfin.DirichletBC's
@@ -156,18 +158,14 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     update_parameters(nonlinear_solver.parameters,
                       config.parameters_nonlinear_solver)
 
-    def equilibrium_solve():
+    def equilibrium_solve(incremental=False):
 
-        try:
-            nonlinear_solver.solve()
-        except RuntimeError:
-            logger.error('Could not solve equilibrium problem; '
-                         'Trying to re-load incrementally.')
+        if incremental:
 
             nonlocal bcs_values
             u.vector()[:] = 0.0
             u_arr_backup = None
-            
+
             try:
                 for i, values_i in enumerate(bcs_values):
                     logger.info(f'Solving for load {values_i}')
@@ -177,7 +175,7 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
 
                     u_arr_backup = u.vector().get_local()
 
-            except:
+            except RuntimeError:
                 logger.error('Could not solve equilibrium problem for load '
                              f'{values_i}; assuming previous load value.')
 
@@ -186,6 +184,16 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
 
                 u.vector()[:] = u_arr_backup
                 bcs_values = bcs_values[:i]
+
+        else:
+
+            try:
+                nonlinear_solver.solve()
+            except RuntimeError:
+                logger.error('Could not solve equilibrium problem; '
+                             'Trying to re-load incrementally.')
+
+                equilibrium_solve(incremental=True)
 
     return equilibrium_solve
 
@@ -775,7 +783,6 @@ def compute_fraction_compressive_stress_field(stress_field):
 
     eignorms = np.sqrt([(v**2).sum() for v in eigs])
     eignorm_min = eignorms.max() * EPS
-    eignorms[eignorms < eignorm_min] = eignorm_min
 
     V = s.function_space()
     S = dolfin.FunctionSpace(
@@ -783,10 +790,12 @@ def compute_fraction_compressive_stress_field(stress_field):
         V.ufl_element().family(),
         V.ufl_element().degree())
 
-    dofs = np.sqrt([(v[v<0.0]**2).sum() for v in eigs]) / eignorms
-
     fraction_compressive_stress_field = dolfin.Function(S)
-    fraction_compressive_stress_field.vector()[:] = dofs
+
+    if eignorm_min > 0.0:
+        eignorms[eignorms < eignorm_min] = eignorm_min
+        dofs = np.sqrt([(v[v<0.0]**2).sum() for v in eigs]) / eignorms
+        fraction_compressive_stress_field.vector()[:] = dofs
 
     return fraction_compressive_stress_field
 

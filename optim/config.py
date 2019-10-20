@@ -6,13 +6,13 @@ logger = logging.getLogger()
 
 parameters_topology_solver = {
     'convergence_tolerance': 1e-4,
-    'minimum_convergences': 5,
-    'maximum_iterations': 5000,
+    'minimum_convergences': 10,
+    'maximum_iterations': 10000,
     }
 
 parameters_distance_solver = {
-    # 'method': 'variational',
-    'method': 'algebraic',
+    'method': 'variational',
+    # 'method': 'algebraic',
     'variational_solver': {
         'threshold': 1/3, # Threshold marking the zero-distance subdomain
         'viscosity': 5e-3, # Diffusive stabilization for solution uniqueness

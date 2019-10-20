@@ -42,7 +42,7 @@ def phasefield_penalty(p):
     return dolfin.grad(p)**2
 
 
-def material_integrity(p, minimum_value=1e-5):
+def material_integrity(p, minimum_value=1e-4):
     '''Material integrity from phasefield `p`.'''
 
     # Degradation exponent
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     # Write solutions every number of solver iterations
     # (All last solutions will be written automatically)
 
-    results_writing_period = 100
+    results_writing_period = 200
     write_phasefield_pvd = True
     write_phasefield_npy = True
     write_displacements_pvd = False
@@ -85,11 +85,13 @@ if __name__ == "__main__":
     # load_type = "vertical"
     load_type = "biaxial"
     mean_axial_strains = [
-        # [0.000, 0.100],
-        [0.500, 0.500],
+        # [0.100, 0.100],
+        # [1.000, 1.000],
+        # [2.000, 2.000],
+        [3.000, 3.000],
         ]
 
-    num_load_increments = 20
+    num_load_increments = 50
 
     delta = 1e-10
     defect_nucleation_centers = [
@@ -115,8 +117,14 @@ if __name__ == "__main__":
         #           [domain_x1, domain_y0+0.75*domain_H]]), # Not Interesting
         # np.array([[domain_x0+0.25*domain_L, domain_y0],
         #           [domain_x1, domain_y1-0.25*domain_H]]), # Not Interesting
+        #
+        # np.array([[domain_x0+1/3*domain_L, domain_y0],
+        #           [domain_x0+2/3*domain_L, domain_y1]]), # Interesting
         np.array([[domain_x0+0.25*domain_L, domain_y0],
                   [domain_x0+0.75*domain_L, domain_y1]]), # Interesting
+        # np.array([[domain_x0+0.20*domain_L, domain_y0],
+        #           [domain_x0+0.80*domain_L, domain_y1]]), # Interesting
+        #
         # np.array([[domain_x0+0.25*domain_L, domain_y0],
         #           [domain_x1-0.25*domain_L, domain_y1],
         #           [domain_x1, domain_y0+0.25*domain_H],
@@ -136,8 +144,8 @@ if __name__ == "__main__":
         # 0.400,
         # 0.450,
         # 0.460,
-        # 0.470,
-        0.480,
+        0.470,
+        # 0.480,
         # 0.490,
         # 0.500,
         ]
@@ -150,20 +158,20 @@ if __name__ == "__main__":
     # Phasefield domain fraction increment
     phasefield_fraction_increment = [
         # 0.050,
-        0.025,
-        # 0.010,
+        # 0.025,
+        0.010,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
         # 0.050,
-        0.025,
-        # 0.010,
+        # 0.025,
+        0.010,
         ]
 
-    minimum_phasefield_fraction = 0.10
-    maximum_phasefield_fraction = 0.30
-    minimum_energy_fraction = 1e-4
+    minimum_phasefield_fraction = 0.0
+    maximum_phasefield_fraction = 0.5
+    minimum_energy_fraction = 1e-5
 
     ### Discretization parameters
 
@@ -171,10 +179,10 @@ if __name__ == "__main__":
         # 40,
         # 41,
         # 80,
-        81,
+        # 81,
         # 121,
         # 160,
-        # 161,
+        161,
         # 320,
         # 321,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
@@ -277,12 +285,12 @@ if __name__ == "__main__":
 
         if material_model_name_i == "LinearElasticModel":
 
-            material_parameters = {'E': Constant(1.0), 'nu': Constant(0.3)}
+            material_parameters = {'E': Constant(1.0), 'nu': Constant(0.0)}
             material_model = material.LinearElasticModel(material_parameters, u)
 
         elif material_model_name_i == "NeoHookeanModel":
 
-            material_parameters = {'E': Constant(1.0), 'nu': Constant(0.3)}
+            material_parameters = {'E': Constant(1.0), 'nu': Constant(0.0)}
             material_model = material.NeoHookeanModel(material_parameters, u)
 
         else:
@@ -502,25 +510,25 @@ if __name__ == "__main__":
                     example.utility.plot_energy_vs_iterations(
                         normalized_energy_vs_iterations,
                         figname="potential_energy_vs_iterations",
-                        ylabel="Normalized potential energy"))
+                        ylabel="Normalized potential energy", semilogy=False))
 
-                figure_handles.append(
-                    example.utility.plot_energy_vs_iterations(
-                        normalized_energy_vs_iterations,
-                        figname="potential_energy_vs_iterations_semilogy",
-                        ylabel="Normalized potential energy", semilogy=True))
+                # figure_handles.append(
+                #     example.utility.plot_energy_vs_iterations(
+                #         normalized_energy_vs_iterations,
+                #         figname="potential_energy_vs_iterations_semilogy",
+                #         ylabel="Normalized potential energy", semilogy=True))
 
                 figure_handles.append(
                     example.utility.plot_energy_vs_phasefields(
                         normalized_energy_vs_phasefield, phasefield_fractions,
                         figname="potential_energy_vs_phasefield",
-                        ylabel="Normalized potential energy"))
+                        ylabel="Normalized potential energy", semilogy=False))
 
-                figure_handles.append(
-                    example.utility.plot_energy_vs_phasefields(
-                        normalized_energy_vs_phasefield, phasefield_fractions,
-                        figname="potential_energy_vs_phasefield_semilogy",
-                        ylabel="Normalized potential energy", semilogy=True))
+                # figure_handles.append(
+                #     example.utility.plot_energy_vs_phasefields(
+                #         normalized_energy_vs_phasefield, phasefield_fractions,
+                #         figname="potential_energy_vs_phasefield_semilogy",
+                #         ylabel="Normalized potential energy", semilogy=True))
 
                 figure_handles.append(example.utility.plot_phasefiled(p))
                 figure_handles.append(example.utility.plot_material_fraction(material_fraction))
