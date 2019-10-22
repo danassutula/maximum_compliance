@@ -30,8 +30,8 @@ def solve_compliance_maximization_problem(
     minimum_phasefield_fraction,
     maximum_phasefield_fraction,
     minimum_energy_threshold,
-    function_to_call_at_each_phasefield_fraction=None,
-    function_to_call_at_each_phasefield_iteration=None):
+    function_to_call_at_each_phasefield_iteration=None,
+    function_to_call_at_each_phasefield_fraction=None):
     '''
     Parameters
     ----------
@@ -268,7 +268,7 @@ def make_parameter_combinations(*parameters):
 class FunctionWriter:
 
     def __init__(self, outdir, func, name, writing_period=1,
-                 write_pvd=True, write_npy=False):
+                 write_pvd=True, write_npy=True):
 
         if not isinstance(func, Function):
             raise TypeError('Parameter `func` must be a `dolfin.Function`')
