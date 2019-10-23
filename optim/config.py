@@ -6,7 +6,7 @@ logger = logging.getLogger()
 
 parameters_topology_solver = {
     'convergence_tolerance': 1e-4,
-    'minimum_convergences': 10,
+    'minimum_convergences': 12,
     'maximum_iterations': 10000,
     }
 

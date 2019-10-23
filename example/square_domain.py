@@ -93,40 +93,18 @@ if __name__ == "__main__":
         # np.array([[(domain_x0+domain_x1)/2, (domain_y0+domain_y1)/2]]), # Benchmark
         # np.array([[domain_x0, domain_y0],
         #           [domain_x1, domain_y1]]),
-        # np.array([[domain_x0+delta, domain_y0],
-        #           [domain_x1, domain_y0+delta],
-        #           [domain_x1-delta, domain_y1],
-        #           [domain_x0, domain_y1-delta]]),
-        # np.array([[domain_x0, domain_y0],
-        #           [domain_x1, domain_y0],
-        #           [domain_x0, domain_y1]]), # Not interesting (mesh_diagonal="right")
-        # np.array([[domain_x0+0.1, domain_y0],
-        #           [domain_x1-0.1, domain_y0],
-        #           [domain_x1, domain_y1-0.1],
-        #           [domain_x0, domain_y1-0.1]]), # Not interesting
-        # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x0+0.75*domain_L, domain_y1],
-        #           [domain_x0, domain_y0+0.25*domain_H],
-        #           [domain_x1, domain_y0+0.75*domain_H]]), # Not Interesting
-        # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x1, domain_y1-0.25*domain_H]]), # Not Interesting
         #
-        # np.array([[domain_x0+1/3*domain_L, domain_y0],
-        #           [domain_x0+2/3*domain_L, domain_y1]]), # Interesting
+        # np.array([[domain_x0+1/5*domain_L, domain_y0],
+        #           [domain_x0+4/5*domain_L, domain_y1]]), # Phasefields collide headon (not optimal), need greater offset
         # np.array([[domain_x0+1/4*domain_L, domain_y0],
         #           [domain_x0+3/4*domain_L, domain_y1]]), # Interesting
-        np.array([[domain_x0+1/5*domain_L, domain_y0],
-                  [domain_x0+4/5*domain_L, domain_y1]]), # Not interesting
+        # np.array([[domain_x0+1/3*domain_L, domain_y0],
+        #           [domain_x0+2/3*domain_L, domain_y1]]), # Interesting
         #
-        # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x1-0.25*domain_L, domain_y1],
-        #           [domain_x1, domain_y0+0.25*domain_H],
-        #           [domain_x0, domain_y1-0.25*domain_H]]), # Interesting
-        # np.array([[domain_x0+0.25*domain_L, domain_y0],
-        #           [domain_x1-0.25*domain_L, domain_y1],
-        #           [domain_x1, domain_y0+0.25*domain_H],
-        #           [domain_x0, domain_y1-0.25*domain_H],
-        #           [0.5*(domain_x0+domain_x1), 0.5*(domain_y0+domain_y1)]]), # Interesting
+        np.array([[domain_x0+0.1*domain_L, domain_y0],
+                  [domain_x1-0.1*domain_L, domain_y1],
+                  [domain_x1, domain_y0+0.1*domain_H],
+                  [domain_x0, domain_y1-0.1*domain_H]]), # Interesting
         ]
 
     def compute_defect_nucleation_diameter(mesh_element_size):
@@ -137,8 +115,8 @@ if __name__ == "__main__":
         # 0.400,
         # 0.450,
         # 0.460,
-        0.470,
-        # 0.480,
+        # 0.470,
+        0.480,
         # 0.490,
         # 0.500,
         ]
@@ -164,22 +142,21 @@ if __name__ == "__main__":
         0.010,
         ]
 
-    minimum_phasefield_fraction = 0.0
+    minimum_phasefield_fraction = 0.1
     maximum_phasefield_fraction = 0.5
     minimum_energy_fraction = 1e-5
 
     ### Discretization parameters
 
     num_elements_on_edges = [
-        # 40,
-        # 41,
-        # 80,
-        81,
+        # 60,
+        61,
+        # 120,
         # 121,
         # 160,
         # 161,
-        # 320,
-        # 321,
+        # 180,
+        # 181,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
 
     # mesh_diagonal = "left/right"
@@ -314,7 +291,7 @@ if __name__ == "__main__":
             F, u, bcs, bcs_set_values, boundary_displacement_values_i)
 
         # Solve for undamaged material
-        equilibrium_solve()
+        equilibrium_solve(incremental=False)
 
         W_undamaged = dolfin.assemble(W)
         u_arr_undamaged = u.vector().get_local()
