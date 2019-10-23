@@ -197,11 +197,11 @@ class TopologyOptimizer:
         if convergence_tolerance < 0:
             raise ValueError('Require non-negative `convergence_tolerance`')
 
-        if minimum_convergences < 0:
-            raise ValueError('Require non-negative `minimum_convergences`')
+        if not (isinstance(minimum_convergences, int) and minimum_convergences > 0):
+            raise ValueError('Require positive integer `minimum_convergences`')
 
-        if maximum_iterations < 0:
-            raise ValueError('Require non-negative `maximum_iterations`')
+        if not (isinstance(maximum_iterations, int) and maximum_iterations > 0):
+            raise ValueError('Require positive integer `maximum_iterations`')
 
         if len(self._p_locals) > 1 and (
            (self._d_arr_locals[:,0] == 0).all() or
@@ -220,13 +220,19 @@ class TopologyOptimizer:
         solve_phasefield_distances = self._solve_phasefield_distances \
             if len(self._p_locals) > 1 else lambda : None # Dummy callable
 
+        # NOTE: `cost_losses_size` should be divisible by 4. It can not be odd as
+        # otherwise taking the mean will be biasing the fist and the last values.
+        # It must be divisible by 4 because we also wish to assess the mean cost
+        # loss considering half of the losses. The half-size should also be even.
+
+        cost_losses_size = minimum_convergences - minimum_convergences % 4 + 4 \
+            if minimum_convergences % 4 else minimum_convergences # Rounded up
+
+        cost_losses = [np.inf,] * cost_losses_size
+
         dp_arr = 0.0
         J_cur = np.inf
         cost_values = []
-
-        cost_losses_size = minimum_convergences + minimum_convergences % 2
-        cost_losses = [np.inf,] * cost_losses_size # NOTE: List is even size
-
         num_iterations = 0
 
         while num_iterations < maximum_iterations:
@@ -254,8 +260,6 @@ class TopologyOptimizer:
             cost_losses[:-1] = cost_losses[1:]
             cost_losses[-1] = J_prv - J_cur
 
-            mean_cost_loss = sum(cost_losses) / cost_losses_size
-
             dp_arr = p_arr - p_arr_prv
             norm_dp = np.abs(dp_arr).max()
 
@@ -265,23 +269,43 @@ class TopologyOptimizer:
                 f'|dp|_inf:{norm_dp: 8.2e}'
                 )
 
+<<<<<<< HEAD
+=======
+            mean_cost_loss = sum(cost_losses) / cost_losses_size
+>>>>>>> dev
             if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
-                logger.info('Reached minimum number of convergences')
-                break
+
+                # Assess half of the losses in case the cost is curving
+                mean_cost_loss = sum(cost_losses[cost_losses_size//2:]) \
+                               / cost_losses_size * 2
+
+                if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
+                    logger.info('Reached minimum number of convergences')
+                    break
 
             ### Estimate phasefield change
 
-            x_J = assemble(self._dJdp).get_local()
-            x_P = assemble(self._dPdp).get_local()
+            dJdp = assemble(self._dJdp).get_local()
+            dPdp = assemble(self._dPdp).get_local()
 
-            # Orthogonalize with respect to (orthogonal) constraints
+            # Orthogonalize with respect to constraints
             for dCdp_i, dp_C_i in zip(self._dCdp_arr, self._dp_C_arr):
-                x_J -= dp_C_i * (x_J.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
-                x_P -= dp_C_i * (x_P.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                dJdp -= dp_C_i * (dJdp.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+                dPdp -= dp_C_i * (dPdp.dot(dCdp_i) / dp_C_i.dot(dCdp_i))
+
+            norm_dJdp = math.sqrt(dJdp.dot(dJdp))
+            norm_dPdp = math.sqrt(dPdp.dot(dPdp))
+
+            if norm_dJdp == 0.0:
+                logger.error('Cost gradient is zero')
+                break
+
+            if norm_dPdp == 0.0:
+                raise RuntimeError('Penalty gradient is zero')
 
             # Weighted-average phasefield advance direction
-            dp_arr = x_J * (-weight_J/math.sqrt(x_J.dot(x_J))) \
-                   + x_P * (-weight_P/math.sqrt(x_P.dot(x_P)))
+            dp_arr = dJdp * (-weight_J / norm_dJdp) \
+                   + dPdp * (-weight_P / norm_dPdp)
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
 

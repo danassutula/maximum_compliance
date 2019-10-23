@@ -6,13 +6,13 @@ logger = logging.getLogger()
 
 parameters_topology_solver = {
     'convergence_tolerance': 1e-4,
-    'minimum_convergences': 5,
-    'maximum_iterations': 5000,
+    'minimum_convergences': 12,
+    'maximum_iterations': 10000,
     }
 
 parameters_distance_solver = {
-    # 'method': 'variational',
-    'method': 'algebraic',
+    'method': 'variational',
+    # 'method': 'algebraic',
     'variational_solver': {
         'threshold': 1/3, # Threshold marking the zero-distance subdomain
         'viscosity': 5e-3, # Diffusive stabilization for solution uniqueness
@@ -33,7 +33,7 @@ parameters_nonlinear_solver = {
         'convergence_criterion': 'residual',
         'error_on_nonconvergence': True,
         'linear_solver': 'default',
-        'maximum_iterations': 25,
+        'maximum_iterations': 10, # 25
         'preconditioner': 'default',
         'relative_tolerance': 1e-12,
         'relaxation_parameter': 1.0,
@@ -44,7 +44,7 @@ parameters_nonlinear_solver = {
         'error_on_nonconvergence': True,
         'line_search': 'bt', # 'basic' | 'bt'
         'linear_solver': 'lu',
-        'maximum_iterations': 50,
+        'maximum_iterations': 20, # 50
         'maximum_residual_evaluations': 2000,
         'method': 'default',
         'preconditioner': 'default',

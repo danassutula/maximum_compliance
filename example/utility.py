@@ -30,8 +30,8 @@ def solve_compliance_maximization_problem(
     minimum_phasefield_fraction,
     maximum_phasefield_fraction,
     minimum_energy_threshold,
-    function_to_call_at_each_phasefield_fraction=None,
-    function_to_call_at_each_phasefield_iteration=None):
+    function_to_call_at_each_phasefield_iteration=None,
+    function_to_call_at_each_phasefield_fraction=None):
     '''
     Parameters
     ----------
@@ -127,7 +127,13 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     '''Nonlinear solver for the hyper-elastic equilibrium problem.
 
     F : dolfin.Form
+<<<<<<< HEAD
         Variational form of equilibrium.
+=======
+        Variational form of equilibrium, i.e. F(u;v)==0 forall v. Usually `F`
+        is obtained by taking the derivative of the potential energy `W`, e.g.
+        `F = dolfin.derivative(W, u)`
+>>>>>>> dev
     u : dolfin.Function
         Displacement function (or a mixed field function).
     bcs : (sequence of) dolfin.DirichletBC's
@@ -153,6 +159,7 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     nonlinear_solver = dolfin.NonlinearVariationalSolver(
         dolfin.NonlinearVariationalProblem(F, u, bcs, dFdu))
 
+<<<<<<< HEAD
     u_arr_backup = np.zeros((u.vector().size(),), float)
 
     def equilibrium_solve():
@@ -164,6 +171,18 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
 
             nonlocal bcs_values
             u.vector()[:] = 0.0
+=======
+    update_parameters(nonlinear_solver.parameters,
+                      config.parameters_nonlinear_solver)
+
+    def equilibrium_solve(incremental=False):
+
+        if incremental:
+
+            nonlocal bcs_values
+            u.vector()[:] = 0.0
+            u_arr_backup = None
+>>>>>>> dev
 
             try:
                 for i, values_i in enumerate(bcs_values):
@@ -172,6 +191,7 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
                     bcs_set_values(values_i)
                     nonlinear_solver.solve()
 
+<<<<<<< HEAD
                     u_arr_backup[:] = u.vector().get_local()
 
             except:
@@ -185,6 +205,34 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
 
 
 def update_parameters(cls, target, source):
+=======
+                    u_arr_backup = u.vector().get_local()
+
+            except RuntimeError:
+                logger.error('Could not solve equilibrium problem for load '
+                             f'{values_i}; assuming previous load value.')
+
+                if u_arr_backup is None:
+                    raise RuntimeError('Previous load value is not available')
+
+                u.vector()[:] = u_arr_backup
+                bcs_values = bcs_values[:i]
+
+        else:
+
+            try:
+                nonlinear_solver.solve()
+            except RuntimeError:
+                logger.error('Could not solve equilibrium problem; '
+                             'Trying to re-load incrementally.')
+
+                equilibrium_solve(incremental=True)
+
+    return equilibrium_solve
+
+
+def update_parameters(target, source):
+>>>>>>> dev
     '''Update dict-like `target` with dict-like `source`.'''
 
     for k in source.keys():
@@ -197,7 +245,11 @@ def update_parameters(cls, target, source):
             if not hasattr(source[k], 'keys'):
                 raise TypeError(f'`source[{k}]` must be dict-like')
             else:
+<<<<<<< HEAD
                 cls._update_parameters(target[k], source[k])
+=======
+                update_parameters(target[k], source[k])
+>>>>>>> dev
 
         elif hasattr(source[k], 'keys'):
             raise TypeError(f'`source[{k}]` can not be dict-like')
@@ -254,7 +306,7 @@ def make_parameter_combinations(*parameters):
 class FunctionWriter:
 
     def __init__(self, outdir, func, name, writing_period=1,
-                 write_pvd=True, write_npy=False):
+                 write_pvd=True, write_npy=True):
 
         if not isinstance(func, Function):
             raise TypeError('Parameter `func` must be a `dolfin.Function`')
@@ -769,7 +821,6 @@ def compute_fraction_compressive_stress_field(stress_field):
 
     eignorms = np.sqrt([(v**2).sum() for v in eigs])
     eignorm_min = eignorms.max() * EPS
-    eignorms[eignorms < eignorm_min] = eignorm_min
 
     V = s.function_space()
     S = dolfin.FunctionSpace(
@@ -777,10 +828,12 @@ def compute_fraction_compressive_stress_field(stress_field):
         V.ufl_element().family(),
         V.ufl_element().degree())
 
-    dofs = np.sqrt([(v[v<0.0]**2).sum() for v in eigs]) / eignorms
-
     fraction_compressive_stress_field = dolfin.Function(S)
-    fraction_compressive_stress_field.vector()[:] = dofs
+
+    if eignorm_min > 0.0:
+        eignorms[eignorms < eignorm_min] = eignorm_min
+        dofs = np.sqrt([(v[v<0.0]**2).sum() for v in eigs]) / eignorms
+        fraction_compressive_stress_field.vector()[:] = dofs
 
     return fraction_compressive_stress_field
 
