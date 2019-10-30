@@ -20,16 +20,14 @@ EPS = 1e-12
 
 
 def solve_compliance_maximization_problem(
-    W, P, p, equilibrium_solve,
-    defect_nucleation_centers,
-    defect_nucleation_diameter,
+    W, P, p, p_locals, equilibrium_solve,
     phasefield_penalty_weight,
     phasefield_collision_distance,
     phasefield_iteration_stepsize,
     phasefield_fraction_increment,
-    minimum_phasefield_fraction,
-    maximum_phasefield_fraction,
-    minimum_energy_threshold,
+    minimum_phasefield_fraction=None,
+    maximum_phasefield_fraction=None,
+    minimum_residual_energy=None,
     function_to_call_at_each_phasefield_iteration=None,
     function_to_call_at_each_phasefield_fraction=None):
     '''
@@ -44,11 +42,20 @@ def solve_compliance_maximization_problem(
 
     '''
 
+    if not isinstance(p, Function):
+        raise TypeError('Parameter `p` must be a `dolfin.Function`')
+
     if function_to_call_at_each_phasefield_fraction is None:
         function_to_call_at_each_phasefield_fraction = lambda : None
     elif not callable(function_to_call_at_each_phasefield_fraction):
         raise TypeError('Parameter `function_to_call_at_each_phasefield_fraction` '
                         'must be callable without any arguments')
+
+    if minimum_phasefield_fraction is None:
+        minimum_phasefield_fraction = 0
+
+    if minimum_residual_energy is None:
+        minimum_residual_energy = -np.inf
 
     energy_vs_iterations = []
     energy_vs_phasefield = []
@@ -60,31 +67,30 @@ def solve_compliance_maximization_problem(
     # Phasefield fraction constraint
     C = (p - p_mean_target) * dx
 
-    V_p = p.function_space()
-
-    p_locals = make_defect_like_phasefield_array(V_p,
-        defect_nucleation_centers, r=0.5*defect_nucleation_diameter)
-
-    p.assign(sum(p_locals))
-
     optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
         equilibrium_write=function_to_call_at_each_phasefield_iteration)
+
+    phasefield_fraction_i = max(minimum_phasefield_fraction,
+        assemble(p*dx) / assemble(1*dx(p.function_space().mesh())))
+
+    if maximum_phasefield_fraction is None:
+        maximum_phasefield_fraction = 1.0
+
+    elif maximum_phasefield_fraction < phasefield_fraction_i:
+        phasefield_fraction_i = maximum_phasefield_fraction
 
     iterations_failed = False
 
     try:
 
-        phasefield_fraction_i = max(minimum_phasefield_fraction,
-            assemble(p*dx) / assemble(1*dx(V_p.mesh())))
+        while phasefield_fraction_i <= maximum_phasefield_fraction:
 
-        while phasefield_fraction_i < maximum_phasefield_fraction:
+            logger.info('Solve for phasefield domain fraction '
+                        f'{phasefield_fraction_i:.3f}')
+
+            p_mean_target.assign(phasefield_fraction_i)
 
             try:
-
-                logger.info('Solve for phasefield domain fraction '
-                            f'{phasefield_fraction_i:.3f}')
-
-                p_mean_target.assign(phasefield_fraction_i)
 
                 _, energy_vs_iterations_i = optimizer.optimize(
                     phasefield_iteration_stepsize, phasefield_penalty_weight,
@@ -106,7 +112,7 @@ def solve_compliance_maximization_problem(
 
             function_to_call_at_each_phasefield_fraction()
 
-            if energy_vs_phasefield[-1] < minimum_energy_threshold:
+            if energy_vs_phasefield[-1] < minimum_residual_energy:
                 logger.info('Energy converged within threshold')
                 break
 
@@ -118,9 +124,8 @@ def solve_compliance_maximization_problem(
     except KeyboardInterrupt:
         logger.info('Received a keyboard interrupt')
 
-    return iterations_failed, energy_vs_iterations, \
-           energy_vs_phasefield, phasefield_fractions, \
-           optimizer, p_locals, p_mean_target
+    return iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
+           phasefield_fractions, optimizer, p_mean_target
 
 
 def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
@@ -510,7 +515,7 @@ def meshgrid_checker_symmetric(xlim, ylim, nrow, ncol):
     return np.concatenate((xs_a, xs_b), axis=0)
 
 
-def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
+def perturbed_gridrows(xs, nrow, ncol, dx, rowstep=2):
 
     if len(xs) != nrow*ncol:
         raise ValueError('Expected `len(xs) == nrow*ncol`')
@@ -523,7 +528,7 @@ def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
     return xs.reshape((-1,2))
 
 
-def pertub_gridcols(xs, nrow, ncol, dy, colstep=2):
+def perturbed_gridcols(xs, nrow, ncol, dy, colstep=2):
 
     if len(xs) != nrow*ncol:
         raise ValueError('Expected `len(xs) == nrow*ncol`')

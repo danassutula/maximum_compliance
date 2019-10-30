@@ -214,11 +214,11 @@ class TopologyOptimizer:
         self._collision_distance = collision_distance
         p_arr = sum(self._p_vec_locals).get_local()
 
-        self._apply_phasefield_constraints(p_arr)
-        self._assign_phasefield_values(p_arr)
-
         solve_phasefield_distances = self._solve_phasefield_distances \
             if len(self._p_locals) > 1 else lambda : None # Dummy callable
+
+        self._apply_phasefield_constraints(p_arr)
+        self._assign_phasefield_values(p_arr)
 
         # NOTE: `cost_losses_size` should be divisible by 4. It can not be odd as
         # otherwise taking the mean will be biasing the fist and the last values.
