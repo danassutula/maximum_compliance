@@ -60,11 +60,20 @@ def variational_distance_solver(phasefield_functions):
         for p_i, d_i, d_arr_i, in zip(phasefield_functions,
                 _distance_functions, _distance_functions_arr):
 
-            solution_vector[:] = d_i.vector()       # Reusing previous solution
-            compute_distance(p_i, threshold, False) # Without re-initialization
-
-            d_i.vector()[:] = solution_vector
-            d_arr_i[:] = solution_vector.get_local()
+            if d_arr_i[0] != np.inf:
+                try:
+                    solution_vector[:] = d_i.vector()       # Reusing previous solution
+                    compute_distance(p_i, threshold, False) # Without re-initialization
+                    d_i.vector()[:] = solution_vector
+                    d_arr_i[:] = solution_vector.get_local()
+                except RuntimeError as exc:
+                    if not solver._mf.array().any():
+                        d_i.vector()[:] = np.inf
+                        d_arr_i[:] = np.inf
+                        logger.warning(exc)
+                    else:
+                        logger.error(exc)
+                        raise
 
     def solve_distances_init():
         for p_i, d_i, d_arr_i, in zip(phasefield_functions,
@@ -144,8 +153,18 @@ def algebraic_distance_solver(phasefield_functions):
         for p_i, d_i, d_arr_i, in zip(phasefield_functions,
                 _distance_functions, _distance_functions_arr):
 
-            compute_distance(p_i, threshold, d_i)
-            d_arr_i[:] = d_i.vector().get_local()
+            if d_arr_i[0] != np.inf:
+                try:
+                    compute_distance(p_i, threshold, d_i)
+                    d_arr_i[:] = d_i.vector().get_local()
+                except RuntimeError as exc:
+                    if (p_i.vector().get_local() <= threshold).all():
+                        d_i.vector()[:] = np.inf
+                        d_arr_i[:] = np.inf
+                        logger.warning(exc)
+                    else:
+                        logger.error(exc)
+                        raise
 
     if not return_distances_as_tuple:
         distance_functions = _distance_functions[0]
@@ -198,8 +217,18 @@ def fast_marching_method(phasefield_functions):
         for p_i, d_i, d_arr_i, in zip(phasefield_functions,
                 _distance_functions, _distance_functions_arr):
 
-            compute_distance(p_i, threshold, d_i)
-            d_arr_i[:] = d_i.vector().get_local()
+            if d_arr_i[0] != np.inf:
+                try:
+                    compute_distance(p_i, threshold, d_i)
+                    d_arr_i[:] = d_i.vector().get_local()
+                except RuntimeError as exc:
+                    if (p_i.vector().get_local() <= threshold).all():
+                        d_i.vector()[:] = np.inf
+                        d_arr_i[:] = np.inf
+                        logger.warning(exc)
+                    else:
+                        logger.error(exc)
+                        raise
 
     if not return_distances_as_tuple:
         distance_functions = _distance_functions[0]
@@ -455,8 +484,8 @@ class AlgebraicDistanceSolver:
         dof_index = np.flatnonzero(func.vector().get_local() > threshold)
 
         if not dof_index.size:
-            raise RuntimeError('`func` (`dolfin.Function`) is '
-                               'entirely below `threshold`')
+            raise RuntimeError('Could not mark any nodes inside the '
+                               'domain given the value of threshold')
 
         pos_index = self._index_dof_to_pos[dof_index]
 
@@ -894,8 +923,8 @@ class FastMarchingMethod:
         dof_index = np.flatnonzero(func.vector().get_local() > threshold)
 
         if not dof_index.size:
-            raise RuntimeError('`func` (`dolfin.Function`) is '
-                               'entirely below `threshold`')
+            raise RuntimeError('Could not mark any nodes inside the '
+                               'domain given the value of threshold')
 
         pos_index = self._index_dof_to_pos[dof_index]
 
