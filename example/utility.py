@@ -45,6 +45,12 @@ def solve_compliance_maximization_problem(
     if not isinstance(p, Function):
         raise TypeError('Parameter `p` must be a `dolfin.Function`')
 
+    if not isinstance(p_locals, (list, tuple)):
+        p_locals = (p_locals,)
+
+    if not all(isinstance(p_i, Function) for p_i in p_locals):
+        raise TypeError('Parameter `p_locals` must be a sequence of `dolfin.Function`s')
+
     if function_to_call_at_each_phasefield_fraction is None:
         function_to_call_at_each_phasefield_fraction = lambda : None
     elif not callable(function_to_call_at_each_phasefield_fraction):
@@ -69,6 +75,8 @@ def solve_compliance_maximization_problem(
 
     optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
         equilibrium_write=function_to_call_at_each_phasefield_iteration)
+
+    p.vector()[:] = sum(p_i.vector() for p_i in p_locals)
 
     phasefield_fraction_i = max(minimum_phasefield_fraction,
         assemble(p*dx) / assemble(1*dx(p.function_space().mesh())))
@@ -337,11 +345,6 @@ class FunctionWriter:
 
         self.write()
 
-    # def __del__(self):
-    #
-    #     if hasattr(self._outfile_pvd, 'close'):
-    #         self._outfile_pvd.close()
-
 
 def remove_outfiles(subdir, file_extensions):
 
@@ -417,7 +420,7 @@ def boundaries_of_rectangle_mesh(mesh):
 
 ### BC's
 
-def uniform_extension_bcs(V):
+def uniform_extension_bcs(V, mode="biaxial"):
     '''
 
     Parameters
@@ -432,24 +435,51 @@ def uniform_extension_bcs(V):
     boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
         boundaries_of_rectangle_mesh(mesh)
 
-    uy_bot = Constant(0.0)
-    ux_rhs = Constant(0.0)
     uy_top = Constant(0.0)
+    uy_bot = Constant(0.0)
     ux_lhs = Constant(0.0)
 
-    bcs = [
-        dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
-        dolfin.DirichletBC(V.sub(0), ux_rhs, boundary_rhs),
-        dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
-        dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
-        ]
+    if mode == "biaxial":
 
-    def bcs_set_values(ux, uy=None):
-        if uy is None: ux, uy = ux
-        uy_bot.assign(-uy)
-        ux_rhs.assign( ux)
-        uy_top.assign( uy)
-        ux_lhs.assign(-ux)
+        ux_rhs = Constant(0.0)
+
+        bcs = [
+            dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+            dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+            dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
+            dolfin.DirichletBC(V.sub(0), ux_rhs, boundary_rhs),
+            ]
+
+        def bcs_set_values(values):
+            ux, uy = values
+            # uy_bot.assign(-uy)
+            ux_rhs.assign( ux)
+            uy_top.assign( uy)
+            # ux_lhs.assign(-ux)
+
+    elif mode == "vertical":
+
+        xs = mesh.coordinates()
+        x0, y0 = xs.min(axis=0)
+        x1, y1 = xs.max(axis=0)
+
+        L = x1 - x0
+        H = y1 - y0
+
+        bcs = [
+            dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+            dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+            dolfin.DirichletBC(V.sub(0), ux_lhs,
+                f"x[0] < {x0+EPS*L} && x[1] < {y0+EPS*H}", method="pointwise"),
+            ]
+
+        def bcs_set_values(values):
+            ux, uy = values
+            uy_top.assign( uy)
+            # uy_bot.assign(-uy)
+
+    else:
+        raise ValueError('Parameter `mode` must be one of: "biaxial" or "vertical"')
 
     return bcs, bcs_set_values
 
