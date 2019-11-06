@@ -238,22 +238,12 @@ class TopologyOptimizer:
         self._apply_phasefield_constraints(p_arr)
         self._assign_phasefield_values(p_arr)
 
-        # NOTE: `cost_losses_size` should be divisible by 4. It can not be odd as
-        # otherwise taking the mean will be biasing the fist and the last values.
-        # It must be divisible by 4 because we also wish to assess the mean cost
-        # loss considering half of the losses. The half-size should also be even.
-
-        cost_losses_size = minimum_convergences - minimum_convergences % 4 + 4 \
-            if minimum_convergences % 4 else minimum_convergences # Rounded up
-
-        cost_losses = [np.inf,] * cost_losses_size
-
         dp_arr = 0.0
         J_cur = np.inf
         cost_values = []
         num_iterations = 0
 
-        while num_iterations < maximum_iterations:
+        while True:
 
             ### Update phasefields
 
@@ -272,32 +262,25 @@ class TopologyOptimizer:
             self.equilibrium_solve()
             self.equilibrium_write()
 
-            J_prv = J_cur
             J_cur = assemble(self._J)
             cost_values.append(J_cur)
 
-            cost_losses[:-1] = cost_losses[1:]
-            cost_losses[-1] = J_prv - J_cur
+            logger.info(f'n:{num_iterations:3d}, '
+                        f'J:{J_cur: 11.5e}')
 
-            dp_arr = p_arr - p_arr_prv
-            norm_dp = np.abs(dp_arr).max()
+            num_iterations += 1
 
-            logger.info(
-                f'n:{num_iterations:3d}, '
-                f'J:{J_cur: 11.5e}, '
-                f'|dp|_inf:{norm_dp: 8.2e}'
-                )
-
-            mean_cost_loss = sum(cost_losses) / cost_losses_size
-            if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
-
-                # Assess half of the losses in case the cost is curving
-                mean_cost_loss = sum(cost_losses[cost_losses_size//2:]) \
-                               / cost_losses_size * 2
-
-                if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
+            try:
+                if (cost_values[-minimum_convergences-1] - J_cur) / \
+                   minimum_convergences < abs(J_cur)*convergence_tolerance:
                     logger.info('Reached minimum number of convergences')
                     break
+            except IndexError:
+                pass
+
+            if num_iterations == maximum_iterations:
+                logger.error('Reached maximum number of iterations')
+                break
 
             ### Estimate phasefield change
 
@@ -312,23 +295,22 @@ class TopologyOptimizer:
             norm_dJdp = math.sqrt(dJdp.dot(dJdp))
             norm_dPdp = math.sqrt(dPdp.dot(dPdp))
 
-            if norm_dJdp == 0.0:
-                logger.error('Cost gradient is zero')
-                break
+            try:
 
-            if norm_dPdp == 0.0:
-                raise RuntimeError('Penalty gradient is zero')
+                # Weighted-average advance vector
+                dp_arr = dJdp * (-weight_J / norm_dJdp) \
+                       + dPdp * (-weight_P / norm_dPdp)
 
-            # Weighted-average phasefield advance direction
-            dp_arr = dJdp * (-weight_J / norm_dJdp) \
-                   + dPdp * (-weight_P / norm_dPdp)
+            except ZeroDivisionError:
+
+                if norm_dJdp == 0.0:
+                    logger.error('Cost gradient is zero')
+                    break
+
+                if norm_dPdp == 0.0:
+                    raise RuntimeError('Penalty gradient is zero')
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
-
-            num_iterations += 1
-
-        else:
-            logger.warning('Reached maximum number of iterations')
 
         return num_iterations, cost_values
 
@@ -411,11 +393,7 @@ class TopologyOptimizer:
 
     @staticmethod
     def _constraint_correction_vectors(dCdp):
-        '''Construct constraint correction vectors.
-
-        The equality constraints are assumed to be the constraints for a fixed
-        phasefield fraction within each of the subdomains where the constraints
-        are defined.
+        '''Constraint correction vectors.
 
         Parameters
         ----------
