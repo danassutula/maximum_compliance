@@ -862,6 +862,8 @@ def plot_energy_vs_iterations(energy_vs_iteration,
     else:
         ah.plot(energy_vs_iteration, '-')
 
+    plt.grid(True)
+
     ah.set_ylabel(ylabel)
     ah.set_xlabel('Iteration')
 
@@ -884,6 +886,8 @@ def plot_energy_vs_phasefields(energy_vs_phasefield,
     else:
         ah.plot(phasefield_meanvalues, energy_vs_phasefield, '-')
 
+    plt.grid(True)
+
     ah.set_ylabel(ylabel)
     ah.set_xlabel('Phasefield domain fraction')
 
@@ -900,9 +904,9 @@ def plot_phasefiled_vs_iterations(phasefield_meanvalues,
     fh = plt.figure(figname)
     fh.clear(); ah=fh.subplots()
 
-    plt.plot(phasefield_meanvalues, phasefield_iterations, '.k')
+    plt.plot(phasefield_meanvalues, phasefield_iterations, '.')
     plt.grid(True)
-    
+
     ah.set_ylabel('Iterations')
     ah.set_xlabel('Phasefield domain fraction')
 
