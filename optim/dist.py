@@ -72,7 +72,6 @@ def variational_distance_solver(phasefield_functions):
                         d_arr_i[:] = np.inf
                         logger.warning(exc)
                     else:
-                        logger.error(exc)
                         raise
 
     def solve_distances_init():
@@ -163,7 +162,6 @@ def algebraic_distance_solver(phasefield_functions):
                         d_arr_i[:] = np.inf
                         logger.warning(exc)
                     else:
-                        logger.error(exc)
                         raise
 
     if not return_distances_as_tuple:
@@ -227,7 +225,6 @@ def fast_marching_method(phasefield_functions):
                         d_arr_i[:] = np.inf
                         logger.warning(exc)
                     else:
-                        logger.error(exc)
                         raise
 
     if not return_distances_as_tuple:
@@ -330,29 +327,19 @@ class VariationalDistanceSolver:
         if init:
 
             self._solve_initdist_problem()
-
-            try:
-                self._solve_distance_problem()
-            except RuntimeError:
-                logger.error('Unable to solve distance problem')
-                raise
+            self._solve_distance_problem()
 
         else:
 
             try:
                 self._solve_distance_problem()
             except RuntimeError:
-                logger.warning('Could not solve distance problem; '
-                               're-initializing and trying again.')
+                logger.error('Could not solve distance problem; '
+                             're-initializing and trying again.')
 
                 self._solve_initdist_problem()
-
-                try:
-                    self._solve_distance_problem()
-                except RuntimeError:
-                    logger.error('Unable to solve distance problem')
-                    raise
-
+                self._solve_distance_problem()
+                
         return self._d
 
     def get_distance_function(self):
