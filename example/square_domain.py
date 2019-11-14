@@ -457,18 +457,18 @@ if __name__ == "__main__":
                     example.utility.plot_energy_vs_iterations(
                         normalized_energy_vs_iterations,
                         figname="potential_energy_vs_iterations",
-                        ylabel="Normalized potential energy", semilogy=False))
+                        ylabel="Normalized strain energy", fontsize="xx-large"))
 
                 figure_handles.append(
                     example.utility.plot_energy_vs_phasefields(
                         normalized_energy_vs_phasefield, phasefield_meanvalues,
                         figname="potential_energy_vs_phasefield",
-                        ylabel="Normalized potential energy", semilogy=False))
+                        ylabel="Normalized strain energy", fontsize="xx-large"))
 
                 figure_handles.append(
                     example.utility.plot_phasefiled_vs_iterations(
                         phasefield_meanvalues, phasefield_iterations,
-                        figname="phasefield_vs_iterations"))
+                        figname="phasefield_vs_iterations", fontsize="xx-large"))
 
                 if write_results:
 
