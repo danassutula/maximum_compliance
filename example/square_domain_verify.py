@@ -1,5 +1,6 @@
 
 import os
+import math
 import time
 import dolfin
 import numpy as np
@@ -14,85 +15,25 @@ from example.square_domain import material_integrity
 
 SAVE_RESULTS = True
 
-RESULTS_SUBDIR_FIGURES = "figures_periodic"
-RESULTS_SUBDIR_FUNCTIONS = "functions_periodic"
 
-# filename = "results/square_domain/date(1002_1313)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(0.1)-eyy(0.05)-reg(0.475)-inc(0.01)-step(0.01)/functions/p000044.npy"
-# filename = "results/square_domain/date(1004_2202)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(5)-exx(0.1)-eyy(0.1)-reg(0.45)-inc(0.025)-step(0.01)/functions/p000009.npy"
-# filename = "results/square_domain/date(1004_2252)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(5)-exx(0.1)-eyy(0.1)-reg(0.475)-inc(0.025)-step(0.01)/functions/p000029.npy"
-
-# filename = "results_ktt/square_domain/date(1005_0107)-model(LinearElasticModel)-mesh(161x161)-dims(1x1)-flaws(5)-exx(0.1)-eyy(0.1)-reg(0.48)-inc(0.05)-step(0.01)/functions/p000010.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.5
-
-# filename = "results_ktt/square_domain/date(1005_0651)-model(LinearElasticModel)-mesh(161x161)-dims(1x1)-flaws(5)-exx(0.1)-eyy(0.1)-reg(0.48)-inc(0.05)-step(0.01)/functions/p000017.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 5, 5, 0.0
-
-
-# mesh: 81x81
-#
-# filename = "results/square_domain/date(1005_2142)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(4)-exx(0.1)-eyy(0.1)-reg(0.48)-inc(0.05)-step(0.01)/functions/p000009.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.5
-# unitcell_mirror_x, unitcell_mirror_y = False, False
-#
-# mesh: 161x161
-#
-# filename = "results_ktt/square_domain/date(1006_1044)-model(LinearElasticModel)-mesh(161x161)-dims(1x1)-flaws(4)-exx(0.1)-eyy(0.1)-reg(0.49)-inc(0.05)-step(0.01)/functions/p000014.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.5
-# unitcell_mirror_x, unitcell_mirror_y = True, True    # dolfin.assemble(W) -> 0.015603893090432131
-# # unitcell_mirror_x, unitcell_mirror_y = False, False  # dolfin.assemble(W) -> 0.01534135586913777
-
-
-# filename = "results/square_domain/date(1006_2210)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(0.1)-eyy(0.1)-reg(0.48)-inc(0.05)-step(0.01)/functions/p000023.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.25
-# unitcell_mirror_x, unitcell_mirror_y = True, True    # dolfin.assemble(W) -> 0.015603893090432131
-
-# # 10/15, 22h00m
-# filename = "results/square_domain/date(1015_2053)-model(LinearElasticModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(0.1)-eyy(0.1)-reg(0.47)-inc(0.01)-step(0.01)/functions/p000033.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-
-# filename = "results_ktt/square_domain/date(1018_1225)-model(NeoHookeanModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(1)-eyy(1)-reg(0.48)-inc(0.025)-step(0.025)/functions/p000010.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 6, 6, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-
-# filename = "results_ktt/square_domain/date(1018_1314)-model(NeoHookeanModel)-mesh(81x81)-dims(1x1)-flaws(2)-exx(1)-eyy(1)-reg(0.48)-inc(0.025)-step(0.025)/functions/p000039.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-
-# filename = "results/square_domain/date(1019_0745)-model(NeoHookeanModel)-mesh(161x161)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.48)-inc(0.025)-step(0.01)/functions/p000020.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-
-# # results_ktt
-# filename = "results/square_domain/date(1019_2315)-model(NeoHookeanModel)-mesh(161x161)-dims(1x1)-flaws(2)-exx(3)-eyy(3)-reg(0.47)-inc(0.01)-step(0.01)/functions/p000007.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-# # results_ktt
-# filename = "results/square_domain/date(1020_0958)-model(NeoHookeanModel)-mesh(161x161)-dims(1x1)-flaws(2)-exx(3)-eyy(3)-reg(0.47)-inc(0.01)-step(0.01)/functions/p000020.npy"
-# num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 1, 1, 0.0
-# unitcell_mirror_x, unitcell_mirror_y = True, True
-
-# results_ktt
-# filename = "results/square_domain/date(1020_2044)-model(NeoHookeanModel)-mesh(161x161)-dims(1x1)-flaws(2)-exx(3)-eyy(3)-reg(0.47)-inc(0.01)-step(0.01)/functions/p000022.npy"
-filename = "results/square_domain/date(1020_2044)-model(NeoHookeanModel)-mesh(161x161)-dims(1x1)-flaws(2)-exx(3)-eyy(3)-reg(0.47)-inc(0.01)-step(0.01)/functions/p000021.npy"
-num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 4, 4, 0.0
+# filename = "results/square_domain/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000038_003800.npy"
+filename = "results/square_domain/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000034_003400.npy"
+num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 2, 2, 0.0
 unitcell_mirror_x, unitcell_mirror_y = True, True
+
+
+# OVERRIDE_LOAD_MODE = "vertical"
+# OVERRIDE_UNITCELL_EXX = 2
+# OVERRIDE_UNITCELL_EYY = 2
 
 
 assert os.path.isfile(filename), f'No such file: \"{filename}\"'
 results_outdir = os.path.split(os.path.dirname(filename))[0]
-results_outdir_figures = os.path.join(results_outdir, RESULTS_SUBDIR_FIGURES)
-results_outdir_functions = os.path.join(results_outdir, RESULTS_SUBDIR_FUNCTIONS)
+results_outdir_functions = os.path.join(results_outdir, "functions_periodic")
 
-minimum_material_integrity = 1e-5
-
-horizontal_strain_values = np.linspace(0.0, 3.0, 100)
-# NOTE: Vertical strain will be computed automatically
+number_of_loading_steps = 50
+minimum_material_integrity = 1e-4
+material_integrity_exponent = 2
 
 material_parameters = {
     'E': dolfin.Constant(1.0),
@@ -103,21 +44,31 @@ element_degree = 1
 element_family = "CG"
 mesh_diagonal = "crossed"
 
+maximum_elements = 300**2
+# maximum_elements = 250**2
+
 
 ### Load unitcell solution
 
-unitcell_nx, unitcell_ny = \
-    [int(s) for s in utility.extract_substring(
-     filename, str_beg="mesh(", str_end=")").split("x")]
+unitcell_nx, unitcell_ny = [int(s) for s in utility.extract_substring(
+                            filename, str_beg="mesh(", str_end=")").split("x")]
 
-unitcell_L, unitcell_H = \
-    [float(s) for s in utility.extract_substring(
-     filename, str_beg="dims(", str_end=")").split("x")]
+unitcell_L, unitcell_H = [float(s) for s in utility.extract_substring(
+                          filename, str_beg="dims(", str_end=")").split("x")]
 
-unitcell_exx = float(utility.extract_substring(filename, "exx(", ")"))
-unitcell_eyy = float(utility.extract_substring(filename, "eyy(", ")"))
-
+unitcell_exx        = float(utility.extract_substring(filename, "exx(", ")"))
+unitcell_eyy        = float(utility.extract_substring(filename, "eyy(", ")"))
 material_model_name = utility.extract_substring(filename, "model(", ")")
+load_mode           = utility.extract_substring(filename, "load(", ")")
+
+if "OVERRIDE_LOAD_MODE" in globals() and OVERRIDE_LOAD_MODE is not None:
+    load_mode = OVERRIDE_LOAD_MODE
+
+if "OVERRIDE_UNITCELL_EXX" in globals() and OVERRIDE_UNITCELL_EXX is not None:
+    unitcell_exx = OVERRIDE_UNITCELL_EXX
+
+if "OVERRIDE_UNITCELL_EYY" in globals() and OVERRIDE_UNITCELL_EYY is not None:
+    unitcell_eyy = OVERRIDE_UNITCELL_EYY
 
 unitcell_p0 = [0,0]
 unitcell_p1 = [unitcell_L, unitcell_H]
@@ -131,20 +82,17 @@ V_p_unitcell = V_m_unitcell = dolfin.FunctionSpace(
 p_unitcell = dolfin.Function(V_p_unitcell)
 p_unitcell.vector()[:] = np.load(filename)
 
-m_unitcell = dolfin.project(material_integrity(
-    p_unitcell, minimum_material_integrity), V_m_unitcell)
+m_unitcell = dolfin.project(
+    material_integrity(p_unitcell, minimum_material_integrity, material_integrity_exponent),
+    V_m_unitcell)
 
-optim.filter.apply_interval_bounds(
-    m_unitcell, minimum_material_integrity, 1.0)
+optim.filter.trimoff_function_values(m_unitcell, minimum_material_integrity, 1.0)
 
 p_unitcell.rename("p_unitcell", '')
 m_unitcell.rename("m_unitcell", '')
 
 
 ### Tile the unitcell solution to obtain the periodic solution
-
-domain_nx = 300
-domain_ny = domain_nx
 
 # domain_L = unitcell_L
 # domain_H = unitcell_H
@@ -155,20 +103,25 @@ domain_H = unitcell_H * num_unitcells_y
 domain_p0 = [0,0]
 domain_p1 = [domain_L, domain_H]
 
-mesh = utility.rectangle_mesh(
-    domain_p0, domain_p1, domain_nx, domain_ny, mesh_diagonal)
+domain_nx = round(math.sqrt(maximum_elements * (domain_L / domain_H)))
+domain_ny = round(math.sqrt(maximum_elements * (domain_H / domain_L)))
+
+mesh = utility.rectangle_mesh(domain_p0, domain_p1, domain_nx, domain_ny, mesh_diagonal)
 
 V_p = V_m = dolfin.FunctionSpace(mesh, element_family, element_degree)
 
 p = utility.project_function_periodically(
-    p_unitcell, num_unticells_x, num_unitcells_y,
-    V_p, unitcell_mirror_x, unitcell_mirror_y,
-    unitcell_overhang_fraction)
+    p_unitcell, num_unticells_x, num_unitcells_y, V_p,
+    unitcell_mirror_x, unitcell_mirror_y, unitcell_overhang_fraction)
 
-optim.filter.apply_interval_bounds(p, 0.0, 1.0)
+optim.filter.trimoff_function_values(p, 0.0, 1.0)
+optim.filter.rescale_function_values(p, 0.0, 1.0)
 
-m = dolfin.project(material_integrity(p, minimum_material_integrity), V_m)
-optim.filter.apply_interval_bounds(m, minimum_material_integrity, 1.0)
+m = dolfin.project(
+    material_integrity(p, minimum_material_integrity, material_integrity_exponent),
+    V_m)
+
+optim.filter.trimoff_function_values(m, minimum_material_integrity, 1.0)
 
 p.rename("p", '')
 m.rename("m", '')
@@ -181,24 +134,16 @@ V_u = dolfin.VectorFunctionSpace(mesh, 'CG', 1)
 u = dolfin.Function(V_u)
 u.rename("u", '')
 
-uxD = dolfin.Constant(0.0)
-uyD = dolfin.Constant(0.0)
+bcs, bcs_set_values = utility.uniform_extension_bcs(V_u, load_mode)
 
-bcs = [
-    dolfin.DirichletBC(V_u.sub(0), uxD, "x[0] > 1.0-DOLFIN_EPS", method="pointwise"),
-    dolfin.DirichletBC(V_u.sub(1), uyD, "x[1] > 1.0-DOLFIN_EPS", method="pointwise"),
-    dolfin.DirichletBC(V_u.sub(0),   0, "x[0] < DOLFIN_EPS"    , method="pointwise"),
-    dolfin.DirichletBC(V_u.sub(1),   0, "x[1] < DOLFIN_EPS"    , method="pointwise"),
-    ]
+if unitcell_exx:
+    ratio_eyy_to_exx = unitcell_eyy / unitcell_exx
+    bcs_values = np.array([(domain_L*exx, domain_H*ratio_eyy_to_exx*exx)
+        for exx in np.linspace(0.0, unitcell_exx, number_of_loading_steps)])
 
-def bcs_set_values(values):
-    uxD.assign(values[0])
-    uyD.assign(values[1])
-
-ratio_eyy_to_exx = unitcell_eyy / unitcell_exx
-
-bcs_values = np.array([(domain_L*exx, domain_H*ratio_eyy_to_exx*exx)
-                       for exx in horizontal_strain_values])
+else: # Vertical extension case
+    bcs_values = np.array([(0.0, domain_H*eyy) for eyy in
+        np.linspace(0.0, unitcell_eyy, number_of_loading_steps)])
 
 if material_model_name == "LinearElasticModel":
     material_model = material.LinearElasticModel(material_parameters, u)
@@ -218,6 +163,12 @@ F = dolfin.derivative(W, u)
 
 equilibrium_solve = utility.equilibrium_solver(
     F, u, bcs, bcs_set_values, bcs_values)
+
+# plt.figure(111)
+# dolfin.plot(m)
+# plt.show()
+#
+# import ipdb; ipdb.set_trace()
 
 if material_model_name == "LinearElasticModel":
     equilibrium_solve(incremental=False)
@@ -264,3 +215,22 @@ if __name__ == "__main__":
 
     if SAVE_RESULTS:
         save_functions()
+
+    # phasefield_fraction = dolfin.assemble(p*dolfin.dx) \
+    #                     / dolfin.assemble(1*dolfin.dx(domain=mesh))
+    #
+    # strain_energy = dolfin.assemble(W)
+    #
+    # m_arr = m.vector().get_local()
+    # u_arr = u.vector().get_local()
+    #
+    # m.vector()[:] = 1.0
+    # equilibrium_solve()
+    #
+    # strain_energy_ref = dolfin.assemble(W)
+    #
+    # m.vector()[:] = m_arr
+    # u.vector()[:] = u_arr
+    #
+    # compliance_factor = strain_energy_ref / strain_energy
+    # print(f'Compliance_factor: {compliance_factor:.4f}')

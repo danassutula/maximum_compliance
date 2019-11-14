@@ -12,6 +12,7 @@ functional to be minimized corresponds to the energy of the deformation.
 
 '''
 
+import sys
 import math
 import dolfin
 import numpy as np
@@ -28,6 +29,8 @@ EPS = 1e-12
 
 
 class TopologyOptimizer:
+
+    MAXIMUM_DISTANCES_UPDATE_PERIOD = 2**(sys.int_info.bits_per_digit-1)
 
     def __init__(self, J, P, C, p, p_locals, equilibrium_solve, equilibrium_write=None):
         '''Minimize the objective functional `J(u(p),p)` (e.g. potential energy
@@ -155,7 +158,7 @@ class TopologyOptimizer:
 
     def optimize(self, stepsize, penalty_weight, collision_distance,
                  convergence_tolerance=None, minimum_convergences=None,
-                 maximum_iterations=None):
+                 maximum_iterations=None, distances_update_frequency=None):
         '''
         Parameters
         ----------
@@ -166,6 +169,11 @@ class TopologyOptimizer:
             of the phasefield penalty gradient `dPdp` and the cost gradient `dJdp`.
         collision_distance : float
             Value for the minimum distance between local phasefields (`p_locals`).
+        distances_update_frequency : float
+            The phasefield distance problem will be solved at approximately every
+            `1 / distances_update_frequency` iterations. The value must be in range
+            [0, 1] where the lower and upper bounds mean that the distance problem
+            is 'solved never' and 'solved at every iteration' respectively.
 
         Returns
         -------
@@ -177,13 +185,13 @@ class TopologyOptimizer:
         '''
 
         if stepsize <= 0.0:
-            raise ValueError('Require `stepsize > 0`')
-
-        if collision_distance < 0.0:
-            raise ValueError('Require `collision_distance > 0`')
+            raise ValueError('Require `stepsize > 0.0`')
 
         if not 0.0 <= penalty_weight <= 1.0:
-            raise ValueError('Require `0 <= penalty_weight <= 1`')
+            raise ValueError('Require `0.0 <= penalty_weight <= 1.0`')
+
+        if collision_distance < 0.0:
+            raise ValueError('Require `collision_distance > 0.0`')
 
         if convergence_tolerance is None: convergence_tolerance = \
             self.parameters_topology_solver['convergence_tolerance']
@@ -194,6 +202,9 @@ class TopologyOptimizer:
         if maximum_iterations is None: maximum_iterations = \
             self.parameters_topology_solver['maximum_iterations']
 
+        if distances_update_frequency is None: distances_update_frequency = \
+            self.parameters_topology_solver['distances_update_frequency']
+
         if convergence_tolerance < 0:
             raise ValueError('Require non-negative `convergence_tolerance`')
 
@@ -203,6 +214,9 @@ class TopologyOptimizer:
         if not (isinstance(maximum_iterations, int) and maximum_iterations > 0):
             raise ValueError('Require positive integer `maximum_iterations`')
 
+        if not 0.0 <= distances_update_frequency <= 1.0:
+            raise ValueError('Require `0.0 <= distances_update_frequency <= 1.0`')
+
         if len(self._p_locals) > 1 and (
            (self._d_arr_locals[:,0] == 0).all() or
            (self._d_arr_locals[:,0] == np.inf).all()):
@@ -211,38 +225,33 @@ class TopologyOptimizer:
         weight_P = penalty_weight
         weight_J = 1.0 - weight_P
 
+        distances_update_period = int(1.0/distances_update_frequency) if \
+            distances_update_frequency > 1/self.MAXIMUM_DISTANCES_UPDATE_PERIOD \
+            else self.MAXIMUM_DISTANCES_UPDATE_PERIOD
+
+        solve_phasefield_distances = self._solve_phasefield_distances \
+            if len(self._p_locals) > 1 else lambda : None # Dummy callable
+
         self._collision_distance = collision_distance
         p_arr = sum(self._p_vec_locals).get_local()
 
         self._apply_phasefield_constraints(p_arr)
         self._assign_phasefield_values(p_arr)
 
-        solve_phasefield_distances = self._solve_phasefield_distances \
-            if len(self._p_locals) > 1 else lambda : None # Dummy callable
-
-        # NOTE: `cost_losses_size` should be divisible by 4. It can not be odd as
-        # otherwise taking the mean will be biasing the fist and the last values.
-        # It must be divisible by 4 because we also wish to assess the mean cost
-        # loss considering half of the losses. The half-size should also be even.
-
-        cost_losses_size = minimum_convergences - minimum_convergences % 4 + 4 \
-            if minimum_convergences % 4 else minimum_convergences # Rounded up
-
-        cost_losses = [np.inf,] * cost_losses_size
-
         dp_arr = 0.0
         J_cur = np.inf
         cost_values = []
         num_iterations = 0
 
-        while num_iterations < maximum_iterations:
+        while True:
 
             ### Update phasefields
 
             p_arr_prv = p_arr
             p_arr = p_arr + dp_arr
 
-            solve_phasefield_distances()
+            if not num_iterations % distances_update_period:
+                solve_phasefield_distances()
 
             self._apply_collision_constraints(p_arr)
             self._apply_phasefield_constraints(p_arr)
@@ -253,35 +262,25 @@ class TopologyOptimizer:
             self.equilibrium_solve()
             self.equilibrium_write()
 
-            J_prv = J_cur
             J_cur = assemble(self._J)
             cost_values.append(J_cur)
 
-            cost_losses[:-1] = cost_losses[1:]
-            cost_losses[-1] = J_prv - J_cur
+            logger.info(f'n:{num_iterations:3d}, '
+                        f'J:{J_cur: 11.5e}')
 
-            dp_arr = p_arr - p_arr_prv
-            norm_dp = np.abs(dp_arr).max()
+            num_iterations += 1
 
-            logger.info(
-                f'n:{num_iterations:3d}, '
-                f'J:{J_cur: 11.5e}, '
-                f'|dp|_inf:{norm_dp: 8.2e}'
-                )
-
-<<<<<<< HEAD
-=======
-            mean_cost_loss = sum(cost_losses) / cost_losses_size
->>>>>>> dev
-            if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
-
-                # Assess half of the losses in case the cost is curving
-                mean_cost_loss = sum(cost_losses[cost_losses_size//2:]) \
-                               / cost_losses_size * 2
-
-                if abs(mean_cost_loss) < abs(J_cur) * convergence_tolerance:
+            try:
+                if (cost_values[-minimum_convergences-1] - J_cur) / \
+                   minimum_convergences < abs(J_cur)*convergence_tolerance:
                     logger.info('Reached minimum number of convergences')
                     break
+            except IndexError:
+                pass
+
+            if num_iterations == maximum_iterations:
+                logger.error('Reached maximum number of iterations')
+                break
 
             ### Estimate phasefield change
 
@@ -296,23 +295,22 @@ class TopologyOptimizer:
             norm_dJdp = math.sqrt(dJdp.dot(dJdp))
             norm_dPdp = math.sqrt(dPdp.dot(dPdp))
 
-            if norm_dJdp == 0.0:
-                logger.error('Cost gradient is zero')
-                break
+            try:
 
-            if norm_dPdp == 0.0:
-                raise RuntimeError('Penalty gradient is zero')
+                # Weighted-average advance vector
+                dp_arr = dJdp * (-weight_J / norm_dJdp) \
+                       + dPdp * (-weight_P / norm_dPdp)
 
-            # Weighted-average phasefield advance direction
-            dp_arr = dJdp * (-weight_J / norm_dJdp) \
-                   + dPdp * (-weight_P / norm_dPdp)
+            except ZeroDivisionError:
+
+                if norm_dJdp == 0.0:
+                    logger.error('Cost gradient is zero')
+                    break
+
+                if norm_dPdp == 0.0:
+                    raise RuntimeError('Penalty gradient is zero')
 
             dp_arr *= stepsize / np.abs(dp_arr).max()
-
-            num_iterations += 1
-
-        else:
-            logger.warning('Reached maximum number of iterations')
 
         return num_iterations, cost_values
 
@@ -395,11 +393,7 @@ class TopologyOptimizer:
 
     @staticmethod
     def _constraint_correction_vectors(dCdp):
-        '''Construct constraint correction vectors.
-
-        The equality constraints are assumed to be the constraints for a fixed
-        phasefield fraction within each of the subdomains where the constraints
-        are defined.
+        '''Constraint correction vectors.
 
         Parameters
         ----------

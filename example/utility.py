@@ -20,16 +20,14 @@ EPS = 1e-12
 
 
 def solve_compliance_maximization_problem(
-    W, P, p, equilibrium_solve,
-    defect_nucleation_centers,
-    defect_nucleation_diameter,
+    W, P, p, p_locals, equilibrium_solve,
     phasefield_penalty_weight,
     phasefield_collision_distance,
     phasefield_iteration_stepsize,
-    phasefield_fraction_increment,
-    minimum_phasefield_fraction,
-    maximum_phasefield_fraction,
-    minimum_energy_threshold,
+    phasefield_meanvalue_stepsize,
+    minimum_phasefield_meanvalue=None,
+    maximum_phasefield_meanvalue=None,
+    minimum_residual_energy=None,
     function_to_call_at_each_phasefield_iteration=None,
     function_to_call_at_each_phasefield_fraction=None):
     '''
@@ -44,49 +42,70 @@ def solve_compliance_maximization_problem(
 
     '''
 
+    if not isinstance(p, Function):
+        raise TypeError('Parameter `p` must be a `dolfin.Function`')
+
+    if not isinstance(p_locals, (list, tuple)):
+        p_locals = (p_locals,)
+
+    if not all(isinstance(p_i, Function) for p_i in p_locals):
+        raise TypeError('Parameter `p_locals` must be a sequence of `dolfin.Function`s')
+
     if function_to_call_at_each_phasefield_fraction is None:
         function_to_call_at_each_phasefield_fraction = lambda : None
     elif not callable(function_to_call_at_each_phasefield_fraction):
         raise TypeError('Parameter `function_to_call_at_each_phasefield_fraction` '
                         'must be callable without any arguments')
 
-    energy_vs_iterations = []
-    energy_vs_phasefield = []
-    phasefield_fractions = []
+    if minimum_phasefield_meanvalue is None:
+        minimum_phasefield_meanvalue = 0
 
-    # Phasefield target fraction
+    if minimum_residual_energy is None:
+        minimum_residual_energy = -np.inf
+
+    phasefield_meanvalues = []
+    phasefield_iterations = []
+
+    energy_vs_phasefield = []
+    energy_vs_iterations = []
+
+    # Phasefield  mean-value target
     p_mean_target = Constant(0.0)
 
-    # Phasefield fraction constraint
+    # Phasefield mean-value constraint
     C = (p - p_mean_target) * dx
-
-    V_p = p.function_space()
-
-    p_locals = make_defect_like_phasefield_array(V_p,
-        defect_nucleation_centers, r=0.5*defect_nucleation_diameter)
-
-    p.assign(sum(p_locals))
 
     optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
         equilibrium_write=function_to_call_at_each_phasefield_iteration)
 
+    p.vector()[:] = sum(p_i.vector() for p_i in p_locals)
+
+    phasefield_meanvalue_i = max(minimum_phasefield_meanvalue,
+        assemble(p*dx) / assemble(1*dx(p.function_space().mesh())))
+
+    if maximum_phasefield_meanvalue is None:
+        maximum_phasefield_meanvalue = phasefield_meanvalue_i
+
+    elif maximum_phasefield_meanvalue < phasefield_meanvalue_i:
+        phasefield_meanvalue_i = maximum_phasefield_meanvalue
+
+    maximum_phasefield_meanvalue += EPS
+
+    phasefield_iterations_i = 0
     iterations_failed = False
 
     try:
 
-        phasefield_fraction_i = max(minimum_phasefield_fraction,
-            assemble(p*dx) / assemble(1*dx(V_p.mesh())))
+        while phasefield_meanvalue_i < maximum_phasefield_meanvalue:
 
-        while phasefield_fraction_i < maximum_phasefield_fraction:
+            logger.info('Solve for phasefield domain fraction '
+                        f'{phasefield_meanvalue_i:.3f}')
+
+            p_mean_target.assign(phasefield_meanvalue_i)
 
             try:
 
-                logger.info('Solve for phasefield domain fraction '
-                            f'{phasefield_fraction_i:.3f}')
-
-                p_mean_target.assign(phasefield_fraction_i)
-
-                _, energy_vs_iterations_i = optimizer.optimize(
+                iterations_count_i, energy_vs_iterations_i = optimizer.optimize(
                     phasefield_iteration_stepsize, phasefield_penalty_weight,
                     phasefield_collision_distance)
 
@@ -94,23 +113,27 @@ def solve_compliance_maximization_problem(
 
                 logger.error(str(exc))
                 logger.error('Solver failed for domain fraction '
-                             f'{phasefield_fraction_i:.3f}')
+                             f'{phasefield_meanvalue_i:.3f}')
 
                 iterations_failed = True
 
                 break
 
-            phasefield_fractions.append(phasefield_fraction_i)
+            phasefield_iterations_i += iterations_count_i
+
+            phasefield_iterations.append(phasefield_iterations_i)
+            phasefield_meanvalues.append(phasefield_meanvalue_i)
+
             energy_vs_iterations.extend(energy_vs_iterations_i)
             energy_vs_phasefield.append(energy_vs_iterations_i[-1])
 
             function_to_call_at_each_phasefield_fraction()
 
-            if energy_vs_phasefield[-1] < minimum_energy_threshold:
+            if energy_vs_phasefield[-1] < minimum_residual_energy:
                 logger.info('Energy converged within threshold')
                 break
 
-            phasefield_fraction_i += phasefield_fraction_increment
+            phasefield_meanvalue_i += phasefield_meanvalue_stepsize
 
         else:
             logger.info('Reached phasefield domain fraction limit')
@@ -118,9 +141,8 @@ def solve_compliance_maximization_problem(
     except KeyboardInterrupt:
         logger.info('Received a keyboard interrupt')
 
-    return iterations_failed, energy_vs_iterations, \
-           energy_vs_phasefield, phasefield_fractions, \
-           optimizer, p_locals, p_mean_target
+    return iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
+        phasefield_meanvalues, phasefield_iterations, optimizer, p_mean_target
 
 
 def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
@@ -327,14 +349,15 @@ class FunctionWriter:
             os.path.join(outdir, f'{name}.pvd'))
 
         self._outfile_npy_format = os.path.join(
-            outdir, f'{name}'+'{:06d}'+'.npy').format
+            outdir, f'{name}'+'{:06d}_{:06d}'+'.npy').format
 
         if write_pvd and write_npy:
             def write():
 
                 self._outfile_pvd << self.func
 
-                np.save(self._outfile_npy_format(self._index_write),
+                np.save(self._outfile_npy_format(
+                            self._index_write, self._calls_count),
                         self.func.vector().get_local())
 
                 self._calls_count += 1
@@ -351,7 +374,8 @@ class FunctionWriter:
         elif write_npy:
             def write():
 
-                np.save(self._outfile_npy_format(self._index_write),
+                np.save(self._outfile_npy_format(
+                            self._index_write, self._calls_count),
                         self.func.vector().get_local())
 
                 self._calls_count += 1
@@ -369,11 +393,6 @@ class FunctionWriter:
             self._calls_count += 1; return
 
         self.write()
-
-    # def __del__(self):
-    #
-    #     if hasattr(self._outfile_pvd, 'close'):
-    #         self._outfile_pvd.close()
 
 
 def remove_outfiles(subdir, file_extensions):
@@ -450,7 +469,7 @@ def boundaries_of_rectangle_mesh(mesh):
 
 ### BC's
 
-def uniform_extension_bcs(V):
+def uniform_extension_bcs(V, mode="biaxial"):
     '''
 
     Parameters
@@ -465,37 +484,64 @@ def uniform_extension_bcs(V):
     boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
         boundaries_of_rectangle_mesh(mesh)
 
-    uy_bot = Constant(0.0)
-    ux_rhs = Constant(0.0)
     uy_top = Constant(0.0)
+    uy_bot = Constant(0.0)
     ux_lhs = Constant(0.0)
 
-    bcs = [
-        dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
-        dolfin.DirichletBC(V.sub(0), ux_rhs, boundary_rhs),
-        dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
-        dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
-        ]
+    if mode == "biaxial":
 
-    def bcs_set_values(ux, uy=None):
-        if uy is None: ux, uy = ux
-        uy_bot.assign(-uy)
-        ux_rhs.assign( ux)
-        uy_top.assign( uy)
-        ux_lhs.assign(-ux)
+        ux_rhs = Constant(0.0)
+
+        bcs = [
+            dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+            dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+            dolfin.DirichletBC(V.sub(0), ux_lhs, boundary_lhs),
+            dolfin.DirichletBC(V.sub(0), ux_rhs, boundary_rhs),
+            ]
+
+        def bcs_set_values(values):
+            ux, uy = values
+            # uy_bot.assign(-uy)
+            ux_rhs.assign( ux)
+            uy_top.assign( uy)
+            # ux_lhs.assign(-ux)
+
+    elif mode == "vertical":
+
+        xs = mesh.coordinates()
+        x0, y0 = xs.min(axis=0)
+        x1, y1 = xs.max(axis=0)
+
+        L = x1 - x0
+        H = y1 - y0
+
+        bcs = [
+            dolfin.DirichletBC(V.sub(1), uy_top, boundary_top),
+            dolfin.DirichletBC(V.sub(1), uy_bot, boundary_bot),
+            dolfin.DirichletBC(V.sub(0), ux_lhs,
+                f"x[0] < {x0+EPS*L} && x[1] < {y0+EPS*H}", method="pointwise"),
+            ]
+
+        def bcs_set_values(values):
+            ux, uy = values
+            uy_top.assign( uy)
+            # uy_bot.assign(-uy)
+
+    else:
+        raise ValueError('Parameter `mode` must be one of: "biaxial" or "vertical"')
 
     return bcs, bcs_set_values
 
 
 ### Defect Initialization
 
-def meshgrid_uniform(xlim, ylim, nrow, ncol):
+def meshgrid_uniform(p0, p1, nx, ny):
 
-    x0, x1 = xlim
-    y0, y1 = ylim
+    x0, y0 = p0
+    x1, y1 = p1
 
-    x = np.linspace(x0, x1, ncol)
-    y = np.linspace(y0, y1, nrow)
+    x = np.linspace(x0, x1, nx)
+    y = np.linspace(y0, y1, ny)
 
     x, y = np.meshgrid(x, y)
 
@@ -505,55 +551,58 @@ def meshgrid_uniform(xlim, ylim, nrow, ncol):
     return np.stack((x, y), axis=1)
 
 
-def meshgrid_uniform_with_margin(xlim, ylim, nrow, ncol):
+def meshgrid_uniform_with_margin(p0, p1, nx, ny):
 
-    margin_x = (xlim[1] - xlim[0]) / ncol / 2
-    margin_y = (ylim[1] - ylim[0]) / nrow / 2
+    x0, y0 = p0
+    x1, y1 = p1
 
-    xlim = [xlim[0] + margin_x, xlim[1] - margin_x]
-    ylim = [ylim[0] + margin_y, ylim[1] - margin_y]
+    margin_x = (x1 - x0) / nx / 2
+    margin_y = (y1 - y0) / ny / 2
 
-    return meshgrid_uniform(xlim, ylim, nrow, ncol)
+    p0 = [x0 + margin_x, y0 + margin_y]
+    p1 = [x1 - margin_x, y1 - margin_y]
+
+    return meshgrid_uniform(p0, p1, nx, ny)
 
 
-def meshgrid_checker_symmetric(xlim, ylim, nrow, ncol):
+def meshgrid_checker_symmetric(p0, p1, nx, ny):
 
-    if not nrow % 2:
-        raise ValueError('Require `nrow` to be odd.')
+    if not nx % 2:
+        raise ValueError('`nx` should be odd')
 
-    if not ncol % 2:
-        raise ValueError('Require `ncol` to be odd.')
+    if not ny % 2:
+        raise ValueError('`ny` should be odd')
 
-    x0, x1 = xlim
-    y0, y1 = ylim
+    x0, y0 = p0
+    x1, y1 = p1
 
-    dx = (x1 - x0) / (ncol - 1)
-    dy = (y1 - y0) / (nrow - 1)
+    dx = (x1 - x0) / (nx - 1)
+    dy = (y1 - y0) / (ny - 1)
 
-    xlim_a = xlim
-    ylim_a = ylim
+    p0_a = p0
+    p1_a = p1
 
-    xlim_b = [xlim[0]+dx, xlim[1]-dx]
-    ylim_b = [ylim[0]+dy, ylim[1]-dy]
+    p0_b = [x0 + dx, y0 + dy]
+    p1_b = [x1 - dx, y1 - dy]
 
-    nrow_b = (nrow-1)//2
-    ncol_b = (ncol-1)//2
+    nx_b = (nx - 1) // 2
+    ny_b = (ny - 1) // 2
 
-    nrow_a = nrow_b + 1
-    ncol_a = ncol_b + 1
+    nx_a = nx_b + 1
+    ny_a = ny_b + 1
 
-    xs_a = meshgrid_uniform(xlim_a, ylim_a, nrow_a, ncol_a)
-    xs_b = meshgrid_uniform(xlim_b, ylim_b, nrow_b, ncol_b)
+    xs_a = meshgrid_uniform(p0_a, p1_a, nx_a, ny_a)
+    xs_b = meshgrid_uniform(p0_b, p1_b, nx_b, ny_b)
 
     return np.concatenate((xs_a, xs_b), axis=0)
 
 
-def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
+def perturbed_gridrows(xs, nx, ny, dx, rowstep=2):
 
-    if len(xs) != nrow*ncol:
-        raise ValueError('Expected `len(xs) == nrow*ncol`')
+    if len(xs) != ny*nx:
+        raise ValueError('Expected `len(xs) == ny*nx`')
 
-    xs = xs.reshape((nrow,ncol,2)).copy()
+    xs = xs.reshape((ny,nx,2)).copy()
 
     xs[0::rowstep,:] += [dx/2, 0.0]
     xs[1::rowstep,:] -= [dx/2, 0.0]
@@ -561,12 +610,12 @@ def pertub_gridrows(xs, nrow, ncol, dx, rowstep=2):
     return xs.reshape((-1,2))
 
 
-def pertub_gridcols(xs, nrow, ncol, dy, colstep=2):
+def perturbed_gridcols(xs, nx, ny, dy, colstep=2):
 
-    if len(xs) != nrow*ncol:
-        raise ValueError('Expected `len(xs) == nrow*ncol`')
+    if len(xs) != ny*nx:
+        raise ValueError('Expected `len(xs) == ny*nx`')
 
-    xs = xs.reshape((nrow,ncol,2)).transpose((1,0,2)).copy()
+    xs = xs.reshape((ny,nx,2)).transpose((1,0,2)).copy()
 
     xs[0::colstep,:] += [0.0, dy/2]
     xs[1::colstep,:] -= [0.0, dy/2]
@@ -574,26 +623,20 @@ def pertub_gridcols(xs, nrow, ncol, dy, colstep=2):
     return xs.reshape((-1,2))
 
 
-def points_inside_rectangle(xs, xlim, ylim):
+def points_inside_rectangle(xs, p0, p1):
 
     if not isinstance(xs, np.ndarray) or xs.ndim != 2:
         raise TypeError('Parameter `xs` must be a 2D numpy array.')
 
-    if not hasattr(xlim, '__len__') or len(xlim) != 2:
-        raise TypeError('Parameter `xlim` must have length 2.')
-
-    if not hasattr(ylim, '__len__') or len(ylim) != 2:
-        raise TypeError('Parameter `ylim` must have length 2.')
-
-    mask = (xs[:,0] > xlim[0]) & \
-           (xs[:,0] < xlim[1]) & \
-           (xs[:,1] > ylim[0]) & \
-           (xs[:,1] < ylim[1])
+    mask = (xs[:,0] > x0) & \
+           (xs[:,0] < x1) & \
+           (xs[:,1] > y0) & \
+           (xs[:,1] < y1)
 
     return np.array(xs[mask])
 
 
-def make_defect_like_phasefield(V, xc, r):
+def make_defect_like_phasefield(V, xc, rx, ry=None, norm=2):
 
     if not isinstance(xc, np.ndarray):
         xc = np.array(xc, ndmin=1)
@@ -606,17 +649,22 @@ def make_defect_like_phasefield(V, xc, r):
 
     p = dolfin.Function(V)
     p_arr = p.vector().get_local()
-
     x = V.tabulate_dof_coordinates()
-    s = ((x-xc)**2).sum(axis=1)
 
-    p_arr[s < r**2] = 1.0
+    if ry is None:
+        s = (np.abs(x-xc)**norm).sum(1)
+        p_arr[s < rx**norm] = 1.0
+    else:
+        s = np.abs(x[:,0]-xc[0])**norm / rx**norm \
+          + np.abs(x[:,1]-xc[1])**norm / ry**norm
+        p_arr[s < 1.0] = 1.0
+
     p.vector()[:] = p_arr
 
     return p
 
 
-def make_defect_like_phasefield_array(V, xs, r):
+def make_defect_like_phasefield_array(V, xs, rx, ry=None, norm=2):
 
     if not isinstance(xs, np.ndarray):
         xs = np.array(xs, ndmin=2)
@@ -630,7 +678,7 @@ def make_defect_like_phasefield_array(V, xs, r):
     ps = []
 
     for x_i in xs:
-        ps.append(make_defect_like_phasefield(V, x_i, r))
+        ps.append(make_defect_like_phasefield(V, x_i, rx, ry, norm))
 
     return ps
 
@@ -842,18 +890,23 @@ def compute_fraction_compressive_stress_field(stress_field):
 
 def plot_energy_vs_iterations(energy_vs_iteration,
                               figname="energy_vs_iterations",
-                              ylabel='Energy', semilogy=False):
+                              ylabel='Energy', fontsize=None):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
-    if semilogy:
-        ah.semilogy(energy_vs_iteration, '-')
-    else:
-        ah.plot(energy_vs_iteration, '-')
+    ax.plot(energy_vs_iteration, '-')
 
-    ah.set_ylabel(ylabel)
-    ah.set_xlabel('Iteration number')
+    plt.grid(True)
+
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel('Iteration number, #')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
 
     fh.tight_layout()
     fh.show()
@@ -862,20 +915,51 @@ def plot_energy_vs_iterations(energy_vs_iteration,
 
 
 def plot_energy_vs_phasefields(energy_vs_phasefield,
-                               phasefield_fractions,
+                               phasefield_meanvalues,
                                figname="energy_vs_phasefield",
-                               ylabel='Energy', semilogy=False):
+                               ylabel='Energy', fontsize=None):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
-    if semilogy:
-        ah.semilogy(phasefield_fractions, energy_vs_phasefield, '-')
-    else:
-        ah.plot(phasefield_fractions, energy_vs_phasefield, '-')
+    ax.plot(phasefield_meanvalues, energy_vs_phasefield, '-')
 
-    ah.set_ylabel(ylabel)
-    ah.set_xlabel('Phasefield fraction')
+    plt.grid(True)
+
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(r'Phasefield domain fraction, $\bar p$')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
+
+    fh.tight_layout()
+    fh.show()
+
+    return fh, figname
+
+
+def plot_phasefiled_vs_iterations(phasefield_meanvalues,
+                                  phasefield_iterations,
+                                  figname="phasefield_vs_iterations",
+                                  fontsize=None):
+
+    fh = plt.figure(figname)
+    fh.clear(); ax=fh.subplots()
+
+    plt.plot(phasefield_meanvalues, phasefield_iterations, '.')
+    plt.grid(True)
+
+    ax.set_ylabel('Cumulative iterations')
+    ax.set_xlabel(r'Phasefield domain fraction, $\bar p$')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
 
     fh.tight_layout()
     fh.show()
@@ -886,7 +970,7 @@ def plot_energy_vs_phasefields(energy_vs_phasefield,
 def plot_phasefiled(p, figname="phasefield"):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
     dolfin.plot(p)
 
@@ -905,7 +989,7 @@ def plot_phasefiled(p, figname="phasefield"):
 def plot_material_fraction(m, figname="material_fraction"):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
     dolfin.plot(m)
 

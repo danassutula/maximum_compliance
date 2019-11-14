@@ -5,9 +5,10 @@ logger = logging.getLogger()
 
 
 parameters_topology_solver = {
-    'convergence_tolerance': 1e-4,
-    'minimum_convergences': 12,
-    'maximum_iterations': 10000,
+    'convergence_tolerance': 1e-6,
+    'maximum_iterations': 15000,
+    'minimum_convergences': 15,
+    'distances_update_frequency': 0.25, # from 0.0 to 1.0
     }
 
 parameters_distance_solver = {
@@ -19,7 +20,7 @@ parameters_distance_solver = {
         'penalty': 1e5, # Penalty for weakly enforcing the zero-distance BC's
         },
     'algebraic_solver': {
-        'threshold': 1/3, # Threshold marking the zero-distance subdomain
+        'threshold': 1/4, # Threshold marking the zero-distance subdomain
         },
     }
 
