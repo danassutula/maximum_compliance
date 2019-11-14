@@ -852,20 +852,23 @@ def compute_fraction_compressive_stress_field(stress_field):
 
 def plot_energy_vs_iterations(energy_vs_iteration,
                               figname="energy_vs_iterations",
-                              ylabel='Energy', semilogy=False):
+                              ylabel='Energy', fontsize=None):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
-    if semilogy:
-        ah.semilogy(energy_vs_iteration, '-')
-    else:
-        ah.plot(energy_vs_iteration, '-')
+    ax.plot(energy_vs_iteration, '-')
 
     plt.grid(True)
 
-    ah.set_ylabel(ylabel)
-    ah.set_xlabel('Iteration')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel('Iteration number, #')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
 
     fh.tight_layout()
     fh.show()
@@ -876,20 +879,23 @@ def plot_energy_vs_iterations(energy_vs_iteration,
 def plot_energy_vs_phasefields(energy_vs_phasefield,
                                phasefield_meanvalues,
                                figname="energy_vs_phasefield",
-                               ylabel='Energy', semilogy=False):
+                               ylabel='Energy', fontsize=None):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
-    if semilogy:
-        ah.semilogy(phasefield_meanvalues, energy_vs_phasefield, '-')
-    else:
-        ah.plot(phasefield_meanvalues, energy_vs_phasefield, '-')
+    ax.plot(phasefield_meanvalues, energy_vs_phasefield, '-')
 
     plt.grid(True)
 
-    ah.set_ylabel(ylabel)
-    ah.set_xlabel('Phasefield domain fraction')
+    ax.set_ylabel(ylabel)
+    ax.set_xlabel(r'Phasefield domain fraction, $\bar p$')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
 
     fh.tight_layout()
     fh.show()
@@ -899,16 +905,23 @@ def plot_energy_vs_phasefields(energy_vs_phasefield,
 
 def plot_phasefiled_vs_iterations(phasefield_meanvalues,
                                   phasefield_iterations,
-                                  figname="phasefield_vs_iterations"):
+                                  figname="phasefield_vs_iterations",
+                                  fontsize=None):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
     plt.plot(phasefield_meanvalues, phasefield_iterations, '.')
     plt.grid(True)
 
-    ah.set_ylabel('Iterations')
-    ah.set_xlabel('Phasefield domain fraction')
+    ax.set_ylabel('Cumulative iterations')
+    ax.set_xlabel(r'Phasefield domain fraction, $\bar p$')
+
+    if fontsize:
+        # ax.title.set_fontsize(fontsize)
+        ax.xaxis.label.set_fontsize(fontsize)
+        ax.yaxis.label.set_fontsize(fontsize)
+        ax.tick_params(labelsize=fontsize)
 
     fh.tight_layout()
     fh.show()
@@ -919,7 +932,7 @@ def plot_phasefiled_vs_iterations(phasefield_meanvalues,
 def plot_phasefiled(p, figname="phasefield"):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
     dolfin.plot(p)
 
@@ -938,7 +951,7 @@ def plot_phasefiled(p, figname="phasefield"):
 def plot_material_fraction(m, figname="material_fraction"):
 
     fh = plt.figure(figname)
-    fh.clear(); ah=fh.subplots()
+    fh.clear(); ax=fh.subplots()
 
     dolfin.plot(m)
 
