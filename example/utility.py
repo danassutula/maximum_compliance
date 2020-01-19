@@ -149,13 +149,9 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     '''Nonlinear solver for the hyper-elastic equilibrium problem.
 
     F : dolfin.Form
-<<<<<<< HEAD
-        Variational form of equilibrium.
-=======
         Variational form of equilibrium, i.e. F(u;v)==0 forall v. Usually `F`
         is obtained by taking the derivative of the potential energy `W`, e.g.
         `F = dolfin.derivative(W, u)`
->>>>>>> dev
     u : dolfin.Function
         Displacement function (or a mixed field function).
     bcs : (sequence of) dolfin.DirichletBC's
@@ -181,19 +177,6 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
     nonlinear_solver = dolfin.NonlinearVariationalSolver(
         dolfin.NonlinearVariationalProblem(F, u, bcs, dFdu))
 
-<<<<<<< HEAD
-    u_arr_backup = np.zeros((u.vector().size(),), float)
-
-    def equilibrium_solve():
-        try:
-            nonlinear_solver.solve()
-        except RuntimeError:
-            logger.error('Could not solve equilibrium problem; '
-                         'Trying to re-load incrementally.')
-
-            nonlocal bcs_values
-            u.vector()[:] = 0.0
-=======
     update_parameters(nonlinear_solver.parameters,
                       config.parameters_nonlinear_solver)
 
@@ -204,7 +187,6 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
             nonlocal bcs_values
             u.vector()[:] = 0.0
             u_arr_backup = None
->>>>>>> dev
 
             try:
                 for i, values_i in enumerate(bcs_values):
@@ -213,21 +195,6 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
                     bcs_set_values(values_i)
                     nonlinear_solver.solve()
 
-<<<<<<< HEAD
-                    u_arr_backup[:] = u.vector().get_local()
-
-            except:
-                logger.error('Could not solve equilibrium problem for load '
-                             f'{values_i}; assuming previous load value.')
-
-                u.vector()[:] = u_arr_backup
-                bcs_values = bcs_values[:i]
-
-    return equilibrium_solve
-
-
-def update_parameters(cls, target, source):
-=======
                     u_arr_backup = u.vector().get_local()
 
             except RuntimeError:
@@ -254,7 +221,6 @@ def update_parameters(cls, target, source):
 
 
 def update_parameters(target, source):
->>>>>>> dev
     '''Update dict-like `target` with dict-like `source`.'''
 
     for k in source.keys():
@@ -267,11 +233,7 @@ def update_parameters(target, source):
             if not hasattr(source[k], 'keys'):
                 raise TypeError(f'`source[{k}]` must be dict-like')
             else:
-<<<<<<< HEAD
-                cls._update_parameters(target[k], source[k])
-=======
                 update_parameters(target[k], source[k])
->>>>>>> dev
 
         elif hasattr(source[k], 'keys'):
             raise TypeError(f'`source[{k}]` can not be dict-like')
