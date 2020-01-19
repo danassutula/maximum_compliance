@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
 '''
+Optimize the distirbution of material under given displacement boundary
+conditions so that the stored (hyper/linear) elastic energy is minimized.
+
+This script is prepared in a way that enables many different cases to be run
+one after another thanks to the parametrization of different problem variables.
 
 '''
 
@@ -20,7 +25,7 @@ from dolfin import *
 
 import optim
 import material
-import example.utility
+import examples.utility
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -53,7 +58,7 @@ if __name__ == "__main__":
     write_results = True
 
     # function_writing_period = 100
-    function_writing_period = 100
+    function_writing_period = 50
 
     ### Problem parameters
 
@@ -72,8 +77,8 @@ if __name__ == "__main__":
     domain_H = domain_y1 - domain_y0
 
     material_model_name = [
-        # "LinearElasticModel",
-        "NeoHookeanModel",
+        "LinearElasticModel",
+        # "NeoHookeanModel",
         ]
 
     load_type = "biaxial"
@@ -126,13 +131,13 @@ if __name__ == "__main__":
         #           [domain_x1, domain_y0+delta*domain_H],
         #           [domain_x0, domain_y1-delta*domain_H]]),
         #
-        # example.utility.perturbed_gridcols(
-        # example.utility.perturbed_gridcols(
-        #     example.utility.meshgrid_uniform(domain_p0, domain_p1, 6, 6),
+        # examples.utility.perturbed_gridcols(
+        # examples.utility.perturbed_gridcols(
+        #     examples.utility.meshgrid_uniform(domain_p0, domain_p1, 6, 6),
         #     6, 6, delta), 6, 6, delta)
         #
-        # example.utility.meshgrid_uniform_with_margin(domain_p0, domain_p1, 4, 4),
-        # example.utility.meshgrid_checker_symmetric(domain_p0, domain_p1, 7, 7)
+        # examples.utility.meshgrid_uniform_with_margin(domain_p0, domain_p1, 4, 4),
+        # examples.utility.meshgrid_checker_symmetric(domain_p0, domain_p1, 7, 7)
         #
         ]
 
@@ -146,14 +151,14 @@ if __name__ == "__main__":
         '''
         # rx = ry = mesh_element_size * (1+EPS) * 5
 
-        rx = domain_L * (9/10/2)
+        rx = domain_L * (8/10/2)
         ry = mesh_element_size * (1+EPS) * 4
 
         return rx, ry
 
     phasefield_penalty_weight = [
-        # 0.48,
-        0.49,
+        0.48,
+        # 0.49,
         # 0.50,
         ]
 
@@ -167,27 +172,28 @@ if __name__ == "__main__":
 
     # Phasefield mean-value stepsize
     phasefield_meanvalue_stepsize = [
-        # 0.10,
-        0.01,
-        ]
-
-    # Phasefield iteration stepsize (L_inf-norm)
-    phasefield_iteration_stepsize = [
-        0.05
+        0.05,
         # 0.02,
         # 0.01,
         ]
 
-    minimum_phasefield_meanvalue = 0.150
-    maximum_phasefield_meanvalue = 0.300
+    # Phasefield iteration stepsize (L_inf-norm)
+    phasefield_iteration_stepsize = [
+        # 0.05
+        0.02,
+        # 0.01,
+        ]
+
+    minimum_phasefield_meanvalue = 0.200 # 0.150
+    maximum_phasefield_meanvalue = 0.250 # 0.300
     minimum_energy_fraction = 1e-4
 
     ### Discretization parameters
 
     num_elements_on_edges = [
         # 61,
-        # 80,
-        100,
+        80,
+        # 100,
         # 150,
         # 180,
         # 200,
@@ -206,13 +212,13 @@ if __name__ == "__main__":
 
     ### Control parameter grid
 
-    outer_loop_parameters = example.utility.make_parameter_combinations(
+    outer_loop_parameters = examples.utility.make_parameter_combinations(
         mean_axial_strains,
         material_model_name,
         num_elements_on_edges,
         )
 
-    inner_loop_parameters = example.utility.make_parameter_combinations(
+    inner_loop_parameters = examples.utility.make_parameter_combinations(
         defect_nucleation_centers,
         phasefield_penalty_weight,
         phasefield_collision_distance,
@@ -243,12 +249,12 @@ if __name__ == "__main__":
             np.linspace(0.0, mean_axial_strains_i[1] * domain_H, num_load_increments+1)
             ), axis=1)[1:,:]
 
-        mesh = example.utility.rectangle_mesh(domain_p0, domain_p1,
+        mesh = examples.utility.rectangle_mesh(domain_p0, domain_p1,
             num_elements_on_edges_i[0], num_elements_on_edges_i[1],
             mesh_diagonal)
 
         boundary_bot, boundary_rhs, boundary_top, boundary_lhs = \
-            example.utility.boundaries_of_rectangle_mesh(mesh)
+            examples.utility.boundaries_of_rectangle_mesh(mesh)
 
         boundary_markers = dolfin.MeshFunction(
             'size_t', mesh, mesh.geometry().dim()-1)
@@ -284,7 +290,7 @@ if __name__ == "__main__":
         ### Dirichlet boundary conditions
 
         bcs, bcs_set_values = \
-            example.utility.uniform_extension_bcs(V_u, load_type)
+            examples.utility.uniform_extension_bcs(V_u, load_type)
 
         ### Material model
 
@@ -325,7 +331,7 @@ if __name__ == "__main__":
         # Equilibrium variational form
         F = dolfin.derivative(W, u)
 
-        equilibrium_solve = example.utility.equilibrium_solver(
+        equilibrium_solve = examples.utility.equilibrium_solver(
             F, u, bcs, bcs_set_values, boundary_displacement_values_i)
 
         # Solve for undamaged material
@@ -378,12 +384,12 @@ if __name__ == "__main__":
                 if not os.path.isdir(results_outdir_figures): os.makedirs(results_outdir_figures)
                 if not os.path.isdir(results_outdir_functions): os.makedirs(results_outdir_functions)
 
-                example.utility.remove_outfiles(results_outdir, SAFE_TO_REMOVE_FILE_TYPES)
-                example.utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
-                example.utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
-                example.utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
+                examples.utility.remove_outfiles(results_outdir, SAFE_TO_REMOVE_FILE_TYPES)
+                examples.utility.remove_outfiles(results_outdir_arrays, SAFE_TO_REMOVE_FILE_TYPES)
+                examples.utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
+                examples.utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
 
-                solution_writer_p = example.utility.FunctionWriter(
+                solution_writer_p = examples.utility.FunctionWriter(
                     results_outdir_functions, p, "p", function_writing_period)
 
                 write_solution_p = solution_writer_p.write
@@ -397,14 +403,14 @@ if __name__ == "__main__":
 
             rx, ry = compute_elliptical_defect_radii(mesh.hmax())
 
-            p_locals = example.utility.make_defect_like_phasefield_array(
+            p_locals = examples.utility.make_defect_like_phasefield_array(
                 V_p, defect_nucleation_centers_i, rx, ry, elliptical_defect_pnorm)
 
             optim.filter.apply_diffusive_smoothing(p_locals, kappa=1e-4)
 
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_meanvalues, phasefield_iterations, topology_optimizer, \
-            p_mean_target = example.utility.solve_compliance_maximization_problem(
+            p_mean_target = examples.utility.solve_compliance_maximization_problem(
                     W, P, p, p_locals, equilibrium_solve,
                     phasefield_penalty_weight_i,
                     phasefield_collision_distance_i,
@@ -454,19 +460,19 @@ if __name__ == "__main__":
                 figure_handles = []
 
                 figure_handles.append(
-                    example.utility.plot_energy_vs_iterations(
+                    examples.utility.plot_energy_vs_iterations(
                         normalized_energy_vs_iterations,
                         figname="potential_energy_vs_iterations",
                         ylabel="Normalized strain energy", fontsize="xx-large"))
 
                 figure_handles.append(
-                    example.utility.plot_energy_vs_phasefields(
+                    examples.utility.plot_energy_vs_phasefields(
                         normalized_energy_vs_phasefield, phasefield_meanvalues,
                         figname="potential_energy_vs_phasefield",
                         ylabel="Normalized strain energy", fontsize="xx-large"))
 
                 figure_handles.append(
-                    example.utility.plot_phasefiled_vs_iterations(
+                    examples.utility.plot_phasefiled_vs_iterations(
                         phasefield_meanvalues, phasefield_iterations,
                         figname="phasefield_vs_iterations", fontsize="xx-large"))
 

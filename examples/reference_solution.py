@@ -3,17 +3,18 @@ import os
 import math
 import dolfin
 import numpy as np
+import matplotlib.pyplot as plt
 
 import material
 import optim
 
-from example import utility
-from example.square_domain import material_integrity
+from examples import utility
+from examples.square_domain_cases import material_integrity
 
 
 SAVE_RESULTS = True
 
-results_outdir = "results/square_domain/reference_solution"
+results_outdir = "results/square_domain_cases/reference_solution"
 results_outdir_functions = os.path.join(results_outdir, "functions")
 
 load_mode = "vertical"
@@ -59,16 +60,13 @@ domain_ny = int(domain_H / domain_L * domain_nx + 0.5)
 domain_p0 = [0,0]
 domain_p1 = [domain_L, domain_H]
 
-domain_xlim = (domain_p0[0], domain_p1[0])
-domain_ylim = (domain_p0[1], domain_p1[1])
-
 mesh = utility.rectangle_mesh(
     domain_p0, domain_p1, domain_nx, domain_ny, mesh_diagonal)
 
 V_p = V_m = dolfin.FunctionSpace(mesh, element_family, element_degree)
 
 xs = utility.meshgrid_checker_symmetric(
-    domain_xlim, domain_ylim, nrow=num_defects_y*2-1, ncol=num_defects_x*2-1)
+    domain_p0, domain_p1, nx=num_defects_x*2-1, ny=num_defects_y*2-1)
 
 ellipse_param_b = (domain_L/domain_nx) * ellipse_param_b_as_nelem
 

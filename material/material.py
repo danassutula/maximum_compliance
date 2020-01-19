@@ -42,7 +42,7 @@ class DeformationMeasures:
         self.I3 = det(C)
 
 
-class AbstractModel:
+class MaterialModelBase:
     def __init__(self, material_parameters, u=None):
         '''Base class for deriving a specific material model.'''
 
@@ -99,7 +99,7 @@ class AbstractModel:
         return self.pk2 if self._to_return_iterable else self.pk2[0]
 
 
-class LinearElasticModel(AbstractModel):
+class LinearElasticModel(MaterialModelBase):
     def initialize_with_field(self, u):
         super().initialize_with_field(u)
 
@@ -136,7 +136,7 @@ class LinearElasticModel(AbstractModel):
             self.pk2.append(sig)
 
 
-class NeoHookeanModel(AbstractModel):
+class NeoHookeanModel(MaterialModelBase):
     def initialize_with_field(self, u):
         super().initialize_with_field(u)
 

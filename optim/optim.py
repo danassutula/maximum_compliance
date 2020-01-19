@@ -32,7 +32,7 @@ class TopologyOptimizer:
 
     MAXIMUM_DISTANCES_UPDATE_PERIOD = 2**(sys.int_info.bits_per_digit-1)
 
-    def __init__(self, J, P, C, p, p_locals, equilibrium_solve, equilibrium_write=None):
+    def __init__(self, J, P, C, p, p_locals, equilibrium_solve, callback_function=None):
         '''Minimize the objective functional `J(u(p),p)` (e.g. potential energy
         of a hyper-elastic solid) with respect to the phasefield `p` subject to
         satisfying the weak-form `F(u(p),p)` (e.g. static equilibrium) and the
@@ -58,8 +58,8 @@ class TopologyOptimizer:
             will be equivelent to the global phasefield function `p`.
         equilibrium_solve : function()
             To be called with each iteration for solving the equilibrium problem.
-        equilibrium_write (optional): function()
-            To be called with each iteration for writing some solution variables.
+        callback_function (optional): function()
+            To be called with each iteration e.g. for writing out solution state.
 
         '''
 
@@ -67,15 +67,15 @@ class TopologyOptimizer:
             raise TypeError('Parameter `equilibrium_solve` must '
                             'be callable without any arguments')
 
-        if equilibrium_write is None:
-            equilibrium_write = lambda : None
+        if callback_function is None:
+            callback_function = lambda : None
 
-        elif not callable(equilibrium_write):
-            raise TypeError('Parameter `equilibrium_write` '
+        elif not callable(callback_function):
+            raise TypeError('Parameter `callback_function` '
                             'must be callable without any arguments')
 
         self.equilibrium_solve = equilibrium_solve
-        self.equilibrium_write = equilibrium_write
+        self.callback_function = callback_function
 
         self._p = p
         self._p_vec = p.vector()
@@ -260,7 +260,7 @@ class TopologyOptimizer:
             ### Solve
 
             self.equilibrium_solve()
-            self.equilibrium_write()
+            self.callback_function()
 
             J_cur = assemble(self._J)
             cost_values.append(J_cur)

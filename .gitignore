@@ -1,18 +1,11 @@
 .*
 *.pyc
 
-/notes.py
-/notes.txt
-
 __pycache__
+archive
+notes
+temp
 
-docs/
-temp/
-test/
-
-results/
-results_ktt*/
-
-rsync_exclude_files.txt
+results*/
 
 !.gitignore

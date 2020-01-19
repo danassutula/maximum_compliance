@@ -76,7 +76,7 @@ def solve_compliance_maximization_problem(
     C = (p - p_mean_target) * dx
 
     optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
-        equilibrium_write=function_to_call_at_each_phasefield_iteration)
+        callback_function=function_to_call_at_each_phasefield_iteration)
 
     p.vector()[:] = sum(p_i.vector() for p_i in p_locals)
 

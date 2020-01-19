@@ -1,3 +1,15 @@
+'''
+The purposes of this script is to assess a unitcell solution that has been
+obtained by executing the script `examples/square_domain_cases.py`.
+
+The assessment of the unitcell solution, specifically the material phasefield
+solution, is done by tilling and/or mirroring the solution along the x,y-axis
+several times and then solving this new problem for the displacement field.
+
+From the displacement field (and other relevant fields, e.g. the stress fields)
+the performance of the unitcell solution can be more easily judged.
+
+'''
 
 import os
 import math
@@ -9,23 +21,27 @@ import matplotlib.pyplot as plt
 import material
 import optim
 
-from example import utility
-from example.square_domain import material_integrity
+from examples import utility
+from examples.square_domain_cases import material_integrity
 
 
 SAVE_RESULTS = True
 
+### Material phasefield unitcell solution file
+filename = "results/square_domain_cases/date(0119_1821)-model(LinearElasticModel)-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.48)-dist(0.15)-inc(0.05)-step(0.05)/functions/p000016_000800.npy"
+# filename = "results/square_domain_cases/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000038_003800.npy"
+# filename = "results/square_domain_cases/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000034_003400.npy"
 
-# filename = "results/square_domain/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000038_003800.npy"
-filename = "results/square_domain/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000034_003400.npy"
-num_unticells_x, num_unitcells_y, unitcell_overhang_fraction = 2, 2, 0.0
-unitcell_mirror_x, unitcell_mirror_y = True, True
-
+num_unticells_x = 2
+num_unitcells_y = 2
+unitcell_mirror_x = True
+unitcell_mirror_y = True
+unitcell_overhang_fraction = 0.0
 
 # OVERRIDE_LOAD_MODE = "vertical"
+OVERRIDE_MODEL_NAME = "NeoHookeanModel"
 # OVERRIDE_UNITCELL_EXX = 2
 # OVERRIDE_UNITCELL_EYY = 2
-
 
 assert os.path.isfile(filename), f'No such file: \"{filename}\"'
 results_outdir = os.path.split(os.path.dirname(filename))[0]
@@ -56,19 +72,24 @@ unitcell_nx, unitcell_ny = [int(s) for s in utility.extract_substring(
 unitcell_L, unitcell_H = [float(s) for s in utility.extract_substring(
                           filename, str_beg="dims(", str_end=")").split("x")]
 
-unitcell_exx        = float(utility.extract_substring(filename, "exx(", ")"))
-unitcell_eyy        = float(utility.extract_substring(filename, "eyy(", ")"))
-material_model_name = utility.extract_substring(filename, "model(", ")")
-load_mode           = utility.extract_substring(filename, "load(", ")")
+load_mode    = utility.extract_substring(filename, "load(", ")")
+model_name   = utility.extract_substring(filename, "model(", ")")
+unitcell_exx = float(utility.extract_substring(filename, "exx(", ")"))
+unitcell_eyy = float(utility.extract_substring(filename, "eyy(", ")"))
+
 
 if "OVERRIDE_LOAD_MODE" in globals() and OVERRIDE_LOAD_MODE is not None:
     load_mode = OVERRIDE_LOAD_MODE
+
+if "OVERRIDE_MODEL_NAME" in globals() and OVERRIDE_MODEL_NAME is not None:
+    model_name = OVERRIDE_MODEL_NAME
 
 if "OVERRIDE_UNITCELL_EXX" in globals() and OVERRIDE_UNITCELL_EXX is not None:
     unitcell_exx = OVERRIDE_UNITCELL_EXX
 
 if "OVERRIDE_UNITCELL_EYY" in globals() and OVERRIDE_UNITCELL_EYY is not None:
     unitcell_eyy = OVERRIDE_UNITCELL_EYY
+
 
 unitcell_p0 = [0,0]
 unitcell_p1 = [unitcell_L, unitcell_H]
@@ -145,12 +166,12 @@ else: # Vertical extension case
     bcs_values = np.array([(0.0, domain_H*eyy) for eyy in
         np.linspace(0.0, unitcell_eyy, number_of_loading_steps)])
 
-if material_model_name == "LinearElasticModel":
+if model_name == "LinearElasticModel":
     material_model = material.LinearElasticModel(material_parameters, u)
-elif material_model_name == "NeoHookeanModel":
+elif model_name == "NeoHookeanModel":
     material_model = material.NeoHookeanModel(material_parameters, u)
 else:
-    raise ValueError('material_model_name')
+    raise ValueError('model_name')
 
 psi_0 = material_model.strain_energy_density()
 pk2_0 = material_model.stress_measure_pk2()
@@ -164,13 +185,7 @@ F = dolfin.derivative(W, u)
 equilibrium_solve = utility.equilibrium_solver(
     F, u, bcs, bcs_set_values, bcs_values)
 
-# plt.figure(111)
-# dolfin.plot(m)
-# plt.show()
-#
-# import ipdb; ipdb.set_trace()
-
-if material_model_name == "LinearElasticModel":
+if model_name == "LinearElasticModel":
     equilibrium_solve(incremental=False)
 else:
     equilibrium_solve(incremental=True)
