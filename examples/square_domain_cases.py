@@ -458,21 +458,30 @@ if __name__ == "__main__":
                 solution_writer_p = examples.utility.FunctionWriter(
                     results_outdir_functions, p, "p", function_writing_period)
 
-                write_solution_p = solution_writer_p.write
-                write_solution_p_periodic = solution_writer_p.periodic_write
+                solution_writer_u = examples.utility.FunctionWriter(
+                    results_outdir_functions, u, "u", function_writing_period)
+
+                def write_solutions():
+                    solution_writer_p.write()
+                    solution_writer_u.write()
+
+                def write_solutions_periodic():
+                    solution_writer_p.periodic_write()
+                    # solution_writer_u.periodic_write() # NOTE: High memory demand
 
             else:
-                write_solution_p = None
-                write_solution_p_periodic = None
+                write_solutions = None
+                write_solutions_periodic = None
 
             u.vector()[:] = u_arr_undamaged
 
-            rx, ry = compute_elliptical_defect_radii(mesh.hmax())
+            rx, ry = compute_defect_radii(mesh.hmax())
 
             p_locals = examples.utility.make_defect_like_phasefield_array(
-                V_p, defect_nucleation_centers_i, rx, ry, elliptical_defect_pnorm)
+                V_p, defect_nucleation_centers, rx, ry, defect_shape_norm)
 
-            optim.filter.apply_diffusive_smoothing(p_locals, kappa=1e-4)
+            optim.filter.apply_diffusive_smoothing(p_locals, kappa=1e-3)
+            optim.filter.rescale_function_values(p_locals, 0.0, 1.0)
 
             solver_iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
             phasefield_meanvalues, phasefield_iterations, topology_optimizer, \
@@ -485,11 +494,11 @@ if __name__ == "__main__":
                     minimum_phasefield_meanvalue,
                     maximum_phasefield_meanvalue,
                     minimum_energy_for_stopping,
-                    write_solution_p_periodic,
+                    write_solutions_periodic,
                     )
 
-            if write_solution_p:
-                write_solution_p()
+            if write_solutions:
+                write_solutions()
 
             # energy_vs_iterations = energy_vs_iterations[
             #     ::max(1, int(len(energy_vs_iterations)/1000))]
