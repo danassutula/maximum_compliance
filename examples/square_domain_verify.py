@@ -193,22 +193,39 @@ else:
 
 ### Post-process
 
-V_S = dolfin.TensorFunctionSpace(mesh, 'DG', 0)
+V_tensor = dolfin.TensorFunctionSpace(mesh, 'DG', 0)
 
-stress_field = dolfin.project(pk2, V_S)
-stress_field.rename("stress (PK2)", '')
+green_strain = None
+stress_field = None
 
-maximal_compressive_stress_field = \
-    utility.compute_maximal_compressive_stress_field(stress_field)
+if COMPUTE_STRAIN:
 
-fraction_compressive_stress_field = \
-    utility.compute_fraction_compressive_stress_field(stress_field)
+    # Threshold for Green-Lagrange strain
+    w_thr = dolfin.Function(V_m); w_thr.vector()[:] = 1.0
+    w_thr.vector()[np.flatnonzero(m.vector() < 0.5)] = 0.0
 
-maximal_compressive_stress_field.rename('maximal_compression', '')
-fraction_compressive_stress_field.rename('fraction_compression', '')
+    E_thr = w_thr*material_model.deformation_measures.E
+    green_strain = dolfin.project(E_thr, V_tensor)
+    green_strain.rename("Green-Lagrange strain", '')
 
+if COMPUTE_STRESS:
+
+    stress_field = dolfin.project(pk2, V_tensor)
+    stress_field.rename("stress (PK2)", '')
+
+    maximal_compressive_stress_field = \
+        utility.compute_maximal_compressive_stress_field(stress_field)
+
+    fraction_compressive_stress_field = \
+        utility.compute_fraction_compressive_stress_field(stress_field)
+
+    maximal_compressive_stress_field.rename('maximal_compression', '')
+    fraction_compressive_stress_field.rename('fraction_compression', '')
 
 def save_functions():
+
+    results_outdir = os.path.split(os.path.dirname(filename))[0]
+    results_outdir_functions = os.path.join(results_outdir, "functions_periodic")
 
     dolfin.File(os.path.join(results_outdir_functions, "periodic_u.pvd")) << u
     dolfin.File(os.path.join(results_outdir_functions, "periodic_m.pvd")) << m
@@ -217,35 +234,18 @@ def save_functions():
     dolfin.File(os.path.join(results_outdir_functions, "unitcell_m.pvd")) << m_unitcell
     dolfin.File(os.path.join(results_outdir_functions, "unitcell_p.pvd")) << p_unitcell
 
-    dolfin.File(os.path.join(results_outdir_functions, "stress_field.pvd")) << stress_field
+    if COMPUTE_STRAIN:
+        dolfin.File(os.path.join(results_outdir_functions, "green_strain.pvd")) << green_strain
 
-    dolfin.File(os.path.join(results_outdir_functions,
-        "maximal_compressive_stress_field.pvd")) << maximal_compressive_stress_field
-
-    dolfin.File(os.path.join(results_outdir_functions,
-        "fraction_compressive_stress_field.pvd")) << fraction_compressive_stress_field
+    if COMPUTE_STRESS:
+        dolfin.File(os.path.join(results_outdir_functions, "stress_field.pvd")) << stress_field
+        dolfin.File(os.path.join(results_outdir_functions,
+            "maximal_compressive_stress_field.pvd")) << maximal_compressive_stress_field
+        dolfin.File(os.path.join(results_outdir_functions,
+            "fraction_compressive_stress_field.pvd")) << fraction_compressive_stress_field
 
 
 if __name__ == "__main__":
 
     if SAVE_RESULTS:
         save_functions()
-
-    # phasefield_fraction = dolfin.assemble(p*dolfin.dx) \
-    #                     / dolfin.assemble(1*dolfin.dx(domain=mesh))
-    #
-    # strain_energy = dolfin.assemble(W)
-    #
-    # m_arr = m.vector().get_local()
-    # u_arr = u.vector().get_local()
-    #
-    # m.vector()[:] = 1.0
-    # equilibrium_solve()
-    #
-    # strain_energy_ref = dolfin.assemble(W)
-    #
-    # m.vector()[:] = m_arr
-    # u.vector()[:] = u_arr
-    #
-    # compliance_factor = strain_energy_ref / strain_energy
-    # print(f'Compliance_factor: {compliance_factor:.4f}')
