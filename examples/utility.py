@@ -139,7 +139,7 @@ def solve_compliance_maximization_problem(
             logger.info('Reached phasefield domain fraction limit')
 
     except KeyboardInterrupt:
-        logger.info('Received a keyboard interrupt')
+        logger.info('Caught a keyboard interrupt')
 
     return iterations_failed, energy_vs_iterations, energy_vs_phasefield, \
         phasefield_meanvalues, phasefield_iterations, optimizer, p_mean_target
@@ -628,6 +628,8 @@ def make_defect_like_phasefield(V, xc, rx, ry=None, norm=2):
 
 def make_defect_like_phasefield_array(V, xs, rx, ry=None, norm=2):
 
+    SEQUENCE_TYPE = (list, tuple, np.ndarray)
+
     if not isinstance(xs, np.ndarray):
         xs = np.array(xs, ndmin=2)
 
@@ -637,10 +639,27 @@ def make_defect_like_phasefield_array(V, xs, rx, ry=None, norm=2):
     if not isinstance(V, dolfin.FunctionSpace):
         raise TypeError('Parameter `V`')
 
-    ps = []
+    if isinstance(rx, SEQUENCE_TYPE) or isinstance(ry, SEQUENCE_TYPE):
 
-    for x_i in xs:
-        ps.append(make_defect_like_phasefield(V, x_i, rx, ry, norm))
+        if   ry is None: ry = rx
+        elif rx is None: rx = ry
+
+        if isinstance(ry, (float, int)):
+            ry = [ry,] * len(rx)
+
+        elif isinstance(rx, (float, int)):
+            rx = [rx,] * len(ry)
+
+        if not (len(xs) == len(rx) == len(ry)):
+            raise RuntimeError("Expected sequence parameters `xs` and "
+                               "`rx` and/or `ry` to have same lengths.")
+
+        ps = [make_defect_like_phasefield(V, xs_i, rx_i, ry_i, norm)
+              for xs_i, rx_i, ry_i in zip(xs, rx, ry)]
+
+    else:
+        ps = [make_defect_like_phasefield(V, xs_i, rx, ry, norm)
+              for xs_i in xs]
 
     return ps
 
@@ -934,7 +953,7 @@ def plot_phasefiled(p, figname="phasefield"):
     fh = plt.figure(figname)
     fh.clear(); ax=fh.subplots()
 
-    dolfin.plot(p)
+    plt.figure(fh.number), dolfin.plot(p);
 
     plt.title('Phasefield, $p$\n('
               + r'$p_\mathrm{min}$ = '
@@ -953,7 +972,7 @@ def plot_material_fraction(m, figname="material_fraction"):
     fh = plt.figure(figname)
     fh.clear(); ax=fh.subplots()
 
-    dolfin.plot(m)
+    plt.figure(fh.number), dolfin.plot(m);
 
     plt.title('Material fraction, $m$\n('
               + r'$m_\mathrm{min}$ = '
