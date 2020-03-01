@@ -38,16 +38,7 @@ unitcell_mirror_x = True
 unitcell_mirror_y = True
 unitcell_overhang_fraction = 0.0
 
-# OVERRIDE_LOAD_MODE = "vertical"
-OVERRIDE_MODEL_NAME = "NeoHookeanModel"
-# OVERRIDE_UNITCELL_EXX = 2
-# OVERRIDE_UNITCELL_EYY = 2
-
-assert os.path.isfile(filename), f'No such file: \"{filename}\"'
-results_outdir = os.path.split(os.path.dirname(filename))[0]
-results_outdir_functions = os.path.join(results_outdir, "functions_periodic")
-
-number_of_loading_steps = 50
+number_of_loading_steps = 25
 minimum_material_integrity = 1e-4
 material_integrity_exponent = 2
 
@@ -60,8 +51,9 @@ element_degree = 1
 element_family = "CG"
 mesh_diagonal = "crossed"
 
-maximum_elements = 300**2
-# maximum_elements = 250**2
+# maximum_elements = 160**2
+maximum_elements = 240**2
+# maximum_elements = 320**2
 
 
 ### Load unitcell solution
@@ -78,16 +70,16 @@ unitcell_exx = float(utility.extract_substring(filename, "exx(", ")"))
 unitcell_eyy = float(utility.extract_substring(filename, "eyy(", ")"))
 
 
-if "OVERRIDE_LOAD_MODE" in globals() and OVERRIDE_LOAD_MODE is not None:
+if OVERRIDE_LOAD_MODE is not None:
     load_mode = OVERRIDE_LOAD_MODE
 
-if "OVERRIDE_MODEL_NAME" in globals() and OVERRIDE_MODEL_NAME is not None:
+if OVERRIDE_MODEL_NAME is not None:
     model_name = OVERRIDE_MODEL_NAME
 
-if "OVERRIDE_UNITCELL_EXX" in globals() and OVERRIDE_UNITCELL_EXX is not None:
+if OVERRIDE_UNITCELL_EXX is not None:
     unitcell_exx = OVERRIDE_UNITCELL_EXX
 
-if "OVERRIDE_UNITCELL_EYY" in globals() and OVERRIDE_UNITCELL_EYY is not None:
+if OVERRIDE_UNITCELL_EYY is not None:
     unitcell_eyy = OVERRIDE_UNITCELL_EYY
 
 
