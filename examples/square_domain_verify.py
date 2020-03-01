@@ -26,11 +26,67 @@ from examples.square_domain_cases import material_integrity
 
 
 SAVE_RESULTS = True
+COMPUTE_STRAIN = True
+COMPUTE_STRESS = False
 
-### Material phasefield unitcell solution file
-filename = "results/square_domain_cases/date(0119_1821)-model(LinearElasticModel)-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.48)-dist(0.15)-inc(0.05)-step(0.05)/functions/p000016_000800.npy"
-# filename = "results/square_domain_cases/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000038_003800.npy"
-# filename = "results/square_domain_cases/date(1110_0637)-model(NeoHookeanModel)-load(biaxial)-mesh(200x200)-dims(1x1)-flaws(2)-exx(2)-eyy(2)-reg(0.49)-dist(0.15)-inc(0.01)-step(0.02)/functions/p000034_003400.npy"
+OVERRIDE_LOAD_MODE = None # "vertical"
+OVERRIDE_MODEL_NAME = None # "LinearElasticModel"
+OVERRIDE_MODEL_NAME = None # "NeoHookeanModel"
+OVERRIDE_UNITCELL_EXX = None # 2
+OVERRIDE_UNITCELL_EYY = None # 2
+
+### Unitcell solution file
+
+# dist(1/4)-exx(1)-eyy(1)
+# filename = "results/square_domain_cases/date(0226_1504)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(4)-exx(1)-eyy(1)-reg(0.5)" \
+#            "-dist(0.25)-inc(0.02)-step(0.1)/functions/p000011_000523.npy"
+# filename = "results/square_domain_cases/date(0226_1325)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(160x160)-dims(1x1)-flaws(4)-exx(1)-eyy(1)-reg(0.5)" \
+#            "-dist(0.25)-inc(0.02)-step(0.1)/functions/p000008_000400.npy"
+
+# dist(1/3)-exx(1)-eyy(1)
+# filename = "results/square_domain_cases/date(0226_1349)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(4)-exx(1)-eyy(1)-reg(0.5)" \
+#            "-dist(0.333)-inc(0.02)-step(0.1)/functions/p000005_000250.npy"
+# filename = "results/square_domain_cases/date(0226_0923)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(160x160)-dims(1x1)-flaws(4)-exx(1)-eyy(1)-reg(0.5)" \
+#            "-dist(0.333)-inc(0.02)-step(0.1)/functions/p000006_000300.npy"
+
+
+# dist(1/4)-exx(1.5)-eyy(1.5)
+# filename = "results/square_domain_cases/date(0226_1607)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(4)-exx(1.5)-eyy(1.5)-reg(0.5)" \
+#            "-dist(0.25)-inc(0.02)-step(0.1)/functions/p000006_000300.npy"
+# filename = "results/square_domain_cases/date(0226_1640)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(160x160)-dims(1x1)-flaws(4)-exx(1.5)-eyy(1.5)-reg(0.5)" \
+#            "-dist(0.25)-inc(0.02)-step(0.1)/functions/p000008_000400.npy"
+
+# dist(1/3)-exx(1.5)-eyy(1.5)
+# filename = "results/square_domain_cases/date(0226_1617)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(80x80)-dims(1x1)-flaws(4)-exx(1.5)-eyy(1.5)-reg(0.5)" \
+#            "-dist(0.333)-inc(0.02)-step(0.1)/functions/p000004_000200.npy"
+# filename = "results/square_domain_cases/date(0226_1729)-model(NeoHookeanModel)" \
+#            "-load(biaxial)-mesh(160x160)-dims(1x1)-flaws(4)-exx(1.5)-eyy(1.5)-reg(0.5)" \
+#            "-dist(0.333)-inc(0.02)-step(0.1)/functions/p000005_000250.npy"
+
+# filename = "results/square_domain_cases/date(0229_1914)-model(NeoHookeanModel)-load(biaxial)-mesh(159x159)-dims(1x1)-flaws(2)-exx(1)-eyy(1)-reg(0.5)-dist(0.333)-inc(0.02)-step(0.1)/functions/p000018_000450.npy"
+filename = "results/square_domain_cases/date(0229_2019)-model(NeoHookeanModel)-load(biaxial)-mesh(159x159)-dims(1x1)-flaws(2)-exx(1.5)-eyy(1.5)-reg(0.5)-dist(0.333)-inc(0.02)-step(0.1)/functions/p000021_000525.npy"
+
+if 'filename' not in globals():
+    raise RuntimeError("Undefined variable `filename`. Require `filename` to be "
+                       "a string that points to `numpy` `.npy` file. The file "
+                       "must contain the phasefield degrees of freedom.")
+elif not isinstance(filename, str):
+    raise ValueError("Require `filename` to be a string that points to a `numpy` `.npy` "
+                     "file. The file must contain the phasefield degrees of freedom.")
+if not os.path.isfile(filename):
+    raise ValueError(f"Could not find file: \"{filename}\".\nRequire `filename` "
+                     "to be a string that points to a `.npy` file. The file must "
+                     "contains the phasefield degrees of freedom.")
+
+
+### Problem parameters
 
 num_unticells_x = 2
 num_unitcells_y = 2
