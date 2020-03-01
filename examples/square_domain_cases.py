@@ -189,7 +189,7 @@ if __name__ == "__main__":
 
     elif CASE == "grid_of_defects":
 
-        nx = ny = 6
+        nx = ny = 4
 
         delta = 1e-3
         defect_nucleation_centers = examples.utility.perturbed_gridcols(
@@ -285,7 +285,6 @@ if __name__ == "__main__":
         )
 
     inner_loop_parameters = examples.utility.make_parameter_combinations(
-        defect_nucleation_centers,
         phasefield_penalty_weight,
         phasefield_collision_distance,
         phasefield_meanvalue_stepsize,
@@ -411,7 +410,6 @@ if __name__ == "__main__":
                                       else None
 
         for (
-            defect_nucleation_centers_i,
             phasefield_penalty_weight_i,
             phasefield_collision_distance_i,
             phasefield_meanvalue_stepsize_i,
@@ -427,7 +425,7 @@ if __name__ == "__main__":
                 f"mesh({num_elements_on_edges_i[0]:d}x"
                      f"{num_elements_on_edges_i[1]:d})-"
                 f"dims({domain_L:.3g}x{domain_H:.3g})-"
-                f"flaws({len(defect_nucleation_centers_i)})-"
+                f"flaws({len(defect_nucleation_centers)})-"
                 f"exx({mean_axial_strains_i[0]:.3g})-"
                 f"eyy({mean_axial_strains_i[1]:.3g})-"
                 f"reg({phasefield_penalty_weight_i:.3g})-"
@@ -558,9 +556,12 @@ if __name__ == "__main__":
 
                     for handle_i, name_i in zip(fig_handles, fig_names):
                         name_i = os.path.join(results_outdir_figures, name_i)
-
                         handle_i.savefig(name_i+'.png')
                         handle_i.savefig(name_i+'.pdf')
+
+                # Save the phasefield plot for illustration purpose
+                handle_i, name_i = examples.utility.plot_phasefiled(p)
+                handle_i.savefig(os.path.join(results_outdir, name_i+".png"))
 
                 if not plot_results:
                     plt.close('all')
