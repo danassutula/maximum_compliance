@@ -48,8 +48,35 @@ def phasefield_penalty(p):
 
 
 def material_integrity(p, minimum_value=1e-4, beta=3):
-    '''Material integrity from phasefield `p`.'''
+    '''Material integrity as a function of the phasefield `p`.'''
     return minimum_value + (1.0-minimum_value) * ((1.0+EPS)-p) ** beta
+
+
+class defect_shape:
+
+    class Round:
+        def compute_radii_method(self, mesh_element_size): # -> rx, ry
+            r = mesh_element_size * (1+EPS) * 5
+            return r, r
+
+    class HorizontalEllipse:
+        def __init__(self, major_radius):
+            self._major_radius = major_radius
+        def compute_radii_method(self, mesh_element_size): # -> rx, ry
+            return self._major_radius, mesh_element_size*(1+EPS)*4
+
+    class AlternatingAxesEllipses:
+        def __init__(self, major_radius, num_ellipses):
+            self._major_radius = major_radius
+            self._num_ellipses = num_ellipses
+        def compute_radii_method(self, mesh_element_size): # -> rx: list, ry: list
+            minor_radius = mesh_element_size * (1+EPS) * 4
+            rx = [self._major_radius, minor_radius] * ((self._num_ellipses+1) // 2)
+            ry = [minor_radius, self._major_radius] * ((self._num_ellipses+1) // 2)
+            if self._num_ellipses % 2:
+                rx.pop()
+                ry.pop()
+            return rx, ry
 
 
 if __name__ == "__main__":
@@ -58,7 +85,8 @@ if __name__ == "__main__":
     write_results = True
 
     # function_writing_period = 100
-    function_writing_period = 50
+    # function_writing_period = 50
+    function_writing_period = 25
 
     ### Problem parameters
 
@@ -77,129 +105,167 @@ if __name__ == "__main__":
     domain_H = domain_y1 - domain_y0
 
     material_model_name = [
-        "LinearElasticModel",
-        # "NeoHookeanModel",
+        # "LinearElasticModel",
+        "NeoHookeanModel",
         ]
 
     load_type = "biaxial"
     # load_type = "vertical"
 
     incremental_loading = False
-    num_load_increments = 50
+    num_load_increments = 25
 
     mean_axial_strains = [
-        # [4.0, 4.0],
-        # [3.0, 3.0],
-        [2.0, 2.0],
-        # [1.0, 1.0],
-        # [0.01, 0.01],
-        # [0.000, 2.000],
-        # [0.000, 1.000],
-        # [0.000, 2.000],
-        # [0.000, 3.000],
-        # [0.000, 6.000],
-        # [0.000, 0.010],
+        # [2.0, 2.0],
+        # [1.5, 1.5],
+        [1.0, 1.0],
+        # [1e-3, 1e-3],
+        # [0.0, 2.0],
+        # [0.0, 1.0],
         ]
 
-    delta = 1e-3
-    defect_nucleation_centers = [
-        #
-        np.array([[domain_x0, domain_y0],
-                  [domain_x1, domain_y1]]),
-        #
-        # np.array([[(domain_x0+domain_x1)*0.5, domain_y0],
-        #           [domain_x1, (domain_y0+domain_y1)*0.5],
-        #           [domain_x0, (domain_y0+domain_y1)*0.5],
-        #           [(domain_x0+domain_x1)*0.5, domain_y1]]), # Benchmark
-        # np.array([[domain_x0, domain_y0],
-        #           [domain_x1, domain_y0],
-        #           [domain_x1, domain_y1],
-        #           [domain_x0, domain_y1],
-        #           [(domain_x0+domain_x1)*0.5, (domain_y0+domain_y1)*0.5]]), # Benchmark
-        #
-        # np.array([[domain_x0+delta*domain_L, domain_y0],
-        #           [domain_x1-delta*domain_L, domain_y1]]),
-        # np.array([[domain_x0+1/5*domain_L, domain_y0],
-        #           [domain_x1-1/5*domain_L, domain_y1]]),
-        # np.array([[domain_x0+1/4*domain_L, domain_y0],
-        #           [domain_x1-1/4*domain_L, domain_y1]]),
-        # np.array([[domain_x0+1/3*domain_L, domain_y0],
-        #           [domain_x1-1/3*domain_L, domain_y1]]),
-        #
-        # np.array([[domain_x0+delta*domain_L, domain_y0],
-        #           [domain_x1-delta*domain_L, domain_y1],
-        #           [domain_x1, domain_y0+delta*domain_H],
-        #           [domain_x0, domain_y1-delta*domain_H]]),
-        #
-        # examples.utility.perturbed_gridcols(
-        # examples.utility.perturbed_gridcols(
-        #     examples.utility.meshgrid_uniform(domain_p0, domain_p1, 6, 6),
-        #     6, 6, delta), 6, 6, delta)
-        #
-        # examples.utility.meshgrid_uniform_with_margin(domain_p0, domain_p1, 4, 4),
-        # examples.utility.meshgrid_checker_symmetric(domain_p0, domain_p1, 7, 7)
-        #
-        ]
+    # CASE = "center"
+    # CASE = "edge_centers"
+    # CASE = "vertices"
+    CASE = "vertices_elliptical"
+    # CASE = "grid_of_defects"
+    # CASE = "two_ellipses"
 
-    elliptical_defect_pnorm = 2
+    defect_shape_norm = 2
 
-    def compute_elliptical_defect_radii(mesh_element_size):
-        '''Compute the radii using the mesh element size.
+    if CASE == "center":
 
-        Note, do not pressume symmetry of the local phasefields. (Check it!)
+        delta = 0.0
+        # delta = 1e-3
 
-        '''
-        # rx = ry = mesh_element_size * (1+EPS) * 5
+        defect_nucleation_centers = np.array([[(domain_x0+domain_x1)*0.5 - delta,
+                                               (domain_y0+domain_y1)*0.5]])
 
-        rx = domain_L * (8/10/2)
-        ry = mesh_element_size * (1+EPS) * 4
+        compute_defect_radii = defect_shape.Round().compute_radii_method
 
-        return rx, ry
+    elif CASE == "edge_centers":
+
+        # delta = 0.0
+        delta = 1e-3
+
+        defect_nucleation_centers = np.array([[(domain_x0+domain_x1)*0.5+delta, domain_y0],
+                                              [domain_x1, (domain_y0+domain_y1)*0.5+delta],
+                                              [domain_x0, (domain_y0+domain_y1)*0.5-delta],
+                                              [(domain_x0+domain_x1)*0.5-delta, domain_y1]])
+
+        compute_defect_radii = defect_shape.Round().compute_radii_method
+
+    elif CASE == "vertices":
+
+        # delta = 1e-3
+        #
+        # defect_nucleation_centers = np.array([[domain_x0+delta, domain_y0],
+        #                                       [domain_x1, domain_y0+delta],
+        #                                       [domain_x1-delta, domain_y1],
+        #                                       [domain_x0, domain_y1-delta]])
+
+        delta = 1e-6
+
+        defect_nucleation_centers = np.array([[domain_x0+delta, domain_y0],
+                                              [domain_x1-delta, domain_y0],
+                                              [domain_x1-delta, domain_y1],
+                                              [domain_x0+delta, domain_y1]])
+
+        compute_defect_radii = defect_shape.Round().compute_radii_method
+
+    elif CASE == "vertices_elliptical":
+
+        defect_nucleation_centers = np.array([[domain_x0, domain_y0],
+                                              [domain_x1, domain_y0],
+                                              [domain_x1, domain_y1],
+                                              [domain_x0, domain_y1]])
+
+        # r_major = domain_L*(1/2)
+        r_major = domain_L*(2/3)
+        # r_major = domain_L*(3/4)
+
+        compute_defect_radii = defect_shape.AlternatingAxesEllipses(
+            r_major, len(defect_nucleation_centers)).compute_radii_method
+
+    elif CASE == "grid_of_defects":
+
+        nx = ny = 6
+
+        delta = 1e-3
+        defect_nucleation_centers = examples.utility.perturbed_gridcols(
+                                    examples.utility.perturbed_gridcols(
+                                    examples.utility.meshgrid_uniform(
+                                        domain_p0, domain_p1, nx, ny),
+                                        nx, ny, delta),
+                                        nx, ny, delta)
+
+        # defect_nucleation_centers = examples.utility.meshgrid_uniform(domain_p0, domain_p1, nx, ny)
+        # defect_nucleation_centers = examples.utility.meshgrid_uniform_with_margin(domain_p0, domain_p1, nx, ny)
+        # defect_nucleation_centers = examples.utility.meshgrid_checker_symmetric(domain_p0, domain_p1, nx, ny)
+
+        compute_defect_radii = defect_shape.Round().compute_radii_method
+
+    elif CASE == "two_ellipses":
+
+        defect_nucleation_centers = np.array([[domain_x0, domain_y0],
+                                              [domain_x1, domain_y1]])
+
+        # r_major = domain_L*(1/2)
+        r_major = domain_L*(2/3)
+        # r_major = domain_L*(3/4)
+
+        compute_defect_radii = defect_shape \
+            .HorizontalEllipse(r_major).compute_radii_method
+
+    else:
+        raise ValueError("`CASE`")
+
+    assert callable(compute_defect_radii) and \
+           len(compute_defect_radii(1.0)) == 2
+
 
     phasefield_penalty_weight = [
-        0.48,
+        # 0.47,
+        # 0.48,
         # 0.49,
-        # 0.50,
+        0.50,
         ]
 
     phasefield_collision_distance = [
-        # 0.050,
-        # 0.100,
-        0.150,
-        # 0.200,
-        # 0.250,
+        # 0.05,
+        # 0.10,
+        # 1/8,
+        # 0.20,
+        1/4,
+        # 1/3,
+        # 1/2,
         ]
 
     # Phasefield mean-value stepsize
     phasefield_meanvalue_stepsize = [
-        0.05,
-        # 0.02,
+        # 0.05,
+        0.02,
         # 0.01,
         ]
 
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
-        # 0.05
-        0.02,
+        0.10,
+        # 0.02,
         # 0.01,
         ]
 
-    minimum_phasefield_meanvalue = 0.200 # 0.150
-    maximum_phasefield_meanvalue = 0.250 # 0.300
-    minimum_energy_fraction = 1e-4
+    minimum_phasefield_meanvalue = None
+    maximum_phasefield_meanvalue = 0.3
+    minimum_energy_fraction = 1e-5 # 1e-4
 
     ### Discretization parameters
 
     num_elements_on_edges = [
-        # 61,
-        80,
-        # 100,
-        # 150,
-        # 180,
-        # 200,
+        # 80,
+        # 159,
+        160,
         # 240,
-        # 244,
-        # 320,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
 
     # mesh_diagonal = "left/right"
