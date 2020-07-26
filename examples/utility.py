@@ -145,7 +145,7 @@ def solve_compliance_maximization_problem(
         phasefield_meanvalues, phasefield_iterations, optimizer, p_mean_target
 
 
-def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
+def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values, **kwargs):
     '''Nonlinear solver for the hyper-elastic equilibrium problem.
 
     F : dolfin.Form
@@ -160,6 +160,10 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
         Called with elements of `bcs_values`.
     bcs_values : numpy.ndarray (2D)
         Sequence of displacement values.
+    umin: dolfin.Expression, dolfin.Function, dolfin.GenericVector
+        Enfores displacement lower bound: `u >= umin`.
+    umax: dolfin.Expression, dolfin.Function, dolfin.GenericVector
+        Enfores displacement upper bound: `u <= umax`.
 
     '''
 
@@ -174,11 +178,49 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
 
     dFdu = dolfin.derivative(F, u)
 
-    nonlinear_solver = dolfin.NonlinearVariationalSolver(
-        dolfin.NonlinearVariationalProblem(F, u, bcs, dFdu))
+    nonlinear_problem = dolfin.NonlinearVariationalProblem(F, u, bcs, dFdu)
+    nonlinear_solver = dolfin.NonlinearVariationalSolver(nonlinear_problem)
 
-    update_parameters(nonlinear_solver.parameters,
+    update_parameters(nonlinear_solver.parameters, 
                       config.parameters_nonlinear_solver)
+    
+    umin = kwargs.get('umin')
+    umax = kwargs.get('umax')
+    
+    if umax is not None or umin is not None:
+        
+        V = u.function_space()
+
+        if isinstance(umin, dolfin.Function):
+            umin = umin.vector()
+        elif isinstance(umin, dolfin.Expression):
+            umin = dolfin.interpolate(umin, V).vector()
+        elif umin is None:
+            umin = dolfin.Function(V).vector()
+            umin[:] = -np.inf
+        elif not isinstance(umin, dolfin.GenericVector) or umin.size() != V.dim():
+            raise TypeError("Key-word argument `umin` must be an instance of: "
+                "`dolfin.Function`, `dolfin.Expression`, or `dolfin.GenericVector` "
+                "(with the correct dimension).")
+
+        if isinstance(umax, dolfin.Function):
+            umax = umax.vector()
+        elif isinstance(umax, dolfin.Expression):
+            umax = dolfin.interpolate(umax, V).vector()
+        elif umax is None:
+            umax = dolfin.Function(V).vector()
+            umax[:] = np.inf
+        elif not isinstance(umax, dolfin.GenericVector) or umax.size() != V.dim():
+            raise TypeError("Key-word argument `umax` must be an instance of: "
+                "`dolfin.Function`, `dolfin.Expression`, or `dolfin.GenericVector` "
+                "(with the correct dimension).")
+        
+        if not (config.parameters_nonlinear_solver['nonlinear_solver'] == 'snes' and 
+                config.parameters_nonlinear_solver['snes_solver']['method'] == 'vinewtonrsls'):
+            logger.warning("Require \"snes\" solver and method called \"vinewtonrsls\" "
+                           "to impose displacement field bounds `umin` and `umax`.")
+        
+        nonlinear_problem.set_bounds(umin, umax)
 
     def equilibrium_solve(incremental=False):
 
@@ -218,6 +260,52 @@ def equilibrium_solver(F, u, bcs, bcs_set_values, bcs_values):
                 equilibrium_solve(incremental=True)
 
     return equilibrium_solve
+
+
+def displacement_bounds(V, xmin, xmax):
+    '''Get lower and upper bound displacemet functions.
+    
+    Parameters
+    ----------
+    V : dolfin.FunctionSpace
+        Displacement field (vector) function space.
+    xmin : sequence of reals
+        Bounding box lower bound.
+    xmax : sequence of reals
+        Bounding box upper bound.
+    
+    Returns
+    -------
+    umin: dolfin.Function
+        Lower bound displacement function `umin = xmin - x <= u`.
+    umax: dolfin.Function
+        Upper bound displacement function `umax = xmax - x >= u`.
+    
+    '''
+
+    dim = V.num_sub_spaces() or 1
+
+    if xmin is None: xmin = (-np.inf,) * dim
+    if xmax is None: xmax = ( np.inf,) * dim
+    
+    if not (isinstance(xmin, (tuple, list, np.ndarray)) and
+            all(isinstance(v, (float, int)) for v in xmin)):
+        raise TypeError("Expected parameter `xmin` to be a sequence of real values")
+            
+    if not (isinstance(xmax, (tuple, list, np.ndarray)) and
+            all(isinstance(v, (float, int)) for v in xmax)):
+        raise TypeError("Expected parameter `xmax` to be a sequence of real values")
+
+    if len(xmin) != dim: raise TypeError("Require `xmin` to have correct size")
+    if len(xmax) != dim: raise TypeError("Require `xmax` to have correct size")
+
+    umin = dolfin.interpolate(dolfin.Expression([f'{xmin_i}-x[{i}]' 
+        for i, xmin_i in enumerate(xmin)], degree=1), V)
+    
+    umax = dolfin.interpolate(dolfin.Expression([f'{xmax_i}-x[{i}]' 
+        for i, xmax_i in enumerate(xmax)], degree=1), V)
+    
+    return umin, umax
 
 
 def update_parameters(target, source):

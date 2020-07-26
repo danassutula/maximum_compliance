@@ -88,10 +88,13 @@ if __name__ == "__main__":
     # function_writing_period = 50
     function_writing_period = 25
 
+    impose_displacement_bounds = False 
+    # NOTE: Only works with "snes" solver and method called "vinewtonrsls"
+
     ### Problem parameters
 
     domain_p0 = np.array([0.0, 0.0])
-    domain_p1 = np.array([1.0, 1.0])
+    domain_p1 = np.array([2.0, 2.0])
 
     # domain_p0 = np.array([0.0, 0.0])
     # domain_p1 = np.array([1.0, 0.5])
@@ -123,13 +126,13 @@ if __name__ == "__main__":
         # [0.0, 2.0],
         # [0.0, 1.0],
         ]
-
+    
     # CASE = "center"
     # CASE = "edge_centers"
     # CASE = "vertices"
-    CASE = "vertices_elliptical"
+    # CASE = "vertices_elliptical"
     # CASE = "grid_of_defects"
-    # CASE = "two_ellipses"
+    CASE = "two_ellipses"
 
     defect_shape_norm = 2
 
@@ -262,9 +265,9 @@ if __name__ == "__main__":
     ### Discretization parameters
 
     num_elements_on_edges = [
-        # 80,
+        80,
         # 159,
-        160,
+        # 160,
         # 240,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
 
@@ -357,6 +360,24 @@ if __name__ == "__main__":
         bcs, bcs_set_values = \
             examples.utility.uniform_extension_bcs(V_u, load_type)
 
+        ### Displacement bounds
+        if impose_displacement_bounds:
+
+            # Displacement bounding box
+            xmin = domain_p0
+            xmax = domain_p1.copy()
+
+            xmax[0] += mean_axial_strains_i[0] * domain_L 
+            xmax[1] += mean_axial_strains_i[1] * domain_H
+            
+            # Displacement lower and upper bounds
+            umin, umax = examples.utility.displacement_bounds(V_u, xmin, xmax)
+            
+            # NOTE: `u` will be such that `xmin <= (x + u) <= xmax`
+
+        else:
+            umin = umax = None
+
         ### Material model
 
         if material_model_name_i == "LinearElasticModel":
@@ -397,7 +418,8 @@ if __name__ == "__main__":
         F = dolfin.derivative(W, u)
 
         equilibrium_solve = examples.utility.equilibrium_solver(
-            F, u, bcs, bcs_set_values, boundary_displacement_values_i)
+            F, u, bcs, bcs_set_values, boundary_displacement_values_i, 
+            umin=umin, umax=umax)
 
         # Solve for undamaged material
         equilibrium_solve(incremental_loading)
