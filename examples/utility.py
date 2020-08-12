@@ -28,8 +28,9 @@ def solve_compliance_maximization_problem(
     minimum_phasefield_meanvalue=None,
     maximum_phasefield_meanvalue=None,
     minimum_residual_energy=None,
-    function_to_call_at_each_phasefield_iteration=None,
-    function_to_call_at_each_phasefield_fraction=None):
+    callback_at_each_phasefield_iteration=None,
+    callback_at_each_phasefield_meanvalue=None,
+    ):
     '''
     Parameters
     ----------
@@ -51,10 +52,10 @@ def solve_compliance_maximization_problem(
     if not all(isinstance(p_i, Function) for p_i in p_locals):
         raise TypeError('Parameter `p_locals` must be a sequence of `dolfin.Function`s')
 
-    if function_to_call_at_each_phasefield_fraction is None:
-        function_to_call_at_each_phasefield_fraction = lambda : None
-    elif not callable(function_to_call_at_each_phasefield_fraction):
-        raise TypeError('Parameter `function_to_call_at_each_phasefield_fraction` '
+    if callback_at_each_phasefield_meanvalue is None:
+        callback_at_each_phasefield_meanvalue = lambda : None
+    elif not callable(callback_at_each_phasefield_meanvalue):
+        raise TypeError('Parameter `callback_at_each_phasefield_meanvalue` '
                         'must be callable without any arguments')
 
     if minimum_phasefield_meanvalue is None:
@@ -75,8 +76,9 @@ def solve_compliance_maximization_problem(
     # Phasefield mean-value constraint
     C = (p - p_mean_target) * dx
 
-    optimizer = optim.TopologyOptimizer(W, P, C, p, p_locals, equilibrium_solve,
-        callback_function=function_to_call_at_each_phasefield_iteration)
+    optimizer = optim.TopologyOptimizer(
+        W, P, C, p, p_locals, equilibrium_solve,
+        callback_at_each_phasefield_iteration)
 
     p.vector()[:] = sum(p_i.vector() for p_i in p_locals)
 
@@ -127,7 +129,7 @@ def solve_compliance_maximization_problem(
             energy_vs_iterations.extend(energy_vs_iterations_i)
             energy_vs_phasefield.append(energy_vs_iterations_i[-1])
 
-            function_to_call_at_each_phasefield_fraction()
+            callback_at_each_phasefield_meanvalue()
 
             if energy_vs_phasefield[-1] < minimum_residual_energy:
                 logger.info('Energy converged within threshold')
@@ -377,8 +379,7 @@ def make_parameter_combinations(*parameters):
 
 class FunctionWriter:
 
-    def __init__(self, outdir, func, name, writing_period=1,
-                 write_pvd=True, write_npy=True):
+    def __init__(self, outdir, func, name, write_pvd=True, write_npy=True):
 
         if not isinstance(func, Function):
             raise TypeError('Parameter `func` must be a `dolfin.Function`')
@@ -390,59 +391,63 @@ class FunctionWriter:
             os.makedirs(outdir)
 
         self.func = func
-        self.writing_period = writing_period
 
-        self._calls_count = 0
         self._index_write = 0
 
         self._outfile_pvd = dolfin.File(
             os.path.join(outdir, f'{name}.pvd'))
 
         self._outfile_npy_format = os.path.join(
-            outdir, f'{name}'+'{:06d}_{:06d}'+'.npy').format
+            outdir, f'{name}'+'{:06d}'+'.npy').format
 
         if write_pvd and write_npy:
             def write():
-
                 self._outfile_pvd << self.func
-
-                np.save(self._outfile_npy_format(
-                            self._index_write, self._calls_count),
+                np.save(self._outfile_npy_format(self._index_write),
                         self.func.vector().get_local())
-
-                self._calls_count += 1
                 self._index_write += 1
 
         elif write_pvd:
             def write():
-
                 self._outfile_pvd << self.func
-
-                self._calls_count += 1
                 self._index_write += 1
 
         elif write_npy:
             def write():
-
-                np.save(self._outfile_npy_format(
-                            self._index_write, self._calls_count),
+                np.save(self._outfile_npy_format(self._index_write),
                         self.func.vector().get_local())
-
-                self._calls_count += 1
                 self._index_write += 1
 
         else:
             raise ValueError('Parameters `write_pvd` and `write_npy`; '
                              'require at lease one to be `True`.')
 
-        self.write = write
+        self.__write = write
+    
+    def write(self):
+        self.__write()
 
-    def periodic_write(self):
 
-        if self._calls_count % self.writing_period:
-            self._calls_count += 1; return
+class PeriodicFunctionWriter(FunctionWriter):
 
-        self.write()
+    def __init__(self, outdir, func, name, writing_period=1,
+                 write_pvd=True, write_npy=True):
+        
+        if not (isinstance(writing_period, int) and writing_period > 0):
+            raise TypeError('Parameter `writing_period` must be a positive `int`')
+
+        super().__init__(outdir, func, name, write_pvd, write_npy)
+        
+        self.writing_period = writing_period
+
+        self._calls_count = 0
+        
+    def write(self):
+
+        if not self._calls_count % self.writing_period:
+            super().write()
+
+        self._calls_count += 1
 
 
 def remove_outfiles(subdir, file_extensions):
@@ -1018,11 +1023,11 @@ def plot_phasefiled_vs_iterations(phasefield_meanvalues,
     fh = plt.figure(figname)
     fh.clear(); ax=fh.subplots()
 
-    plt.plot(phasefield_meanvalues, phasefield_iterations, '.')
+    plt.plot(phasefield_iterations, phasefield_meanvalues, '.')
     plt.grid(True)
 
-    ax.set_ylabel('Cumulative iterations')
-    ax.set_xlabel(r'Phasefield domain fraction, $\bar p$')
+    ax.set_ylabel(r'Phasefield mean value, $\bar p$')
+    ax.set_xlabel('Cumulative iterations')
 
     if fontsize:
         # ax.title.set_fontsize(fontsize)
