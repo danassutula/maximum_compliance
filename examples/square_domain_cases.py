@@ -6,6 +6,11 @@ conditions so that the stored (hyper/linear) elastic energy is minimized.
 This script is prepared in a way that enables many different cases to be run
 one after another thanks to the parametrization of different problem variables.
 
+Tips
+----
+You can send a keyboard interupt (Ctrl-C) to stop the running job. All results
+will be saved.
+
 '''
 
 import config
@@ -55,21 +60,21 @@ def material_integrity(p, minimum_value=1e-4, beta=3):
 class defect_shape:
 
     class Round:
-        def compute_radii_method(self, mesh_element_size): # -> rx, ry
+        def compute_radii(self, mesh_element_size): # -> rx, ry
             r = mesh_element_size * (1+EPS) * 5
             return r, r
 
     class HorizontalEllipse:
         def __init__(self, major_radius):
             self._major_radius = major_radius
-        def compute_radii_method(self, mesh_element_size): # -> rx, ry
+        def compute_radii(self, mesh_element_size): # -> rx, ry
             return self._major_radius, mesh_element_size*(1+EPS)*4
 
     class AlternatingAxesEllipses:
         def __init__(self, major_radius, num_ellipses):
             self._major_radius = major_radius
             self._num_ellipses = num_ellipses
-        def compute_radii_method(self, mesh_element_size): # -> rx: list, ry: list
+        def compute_radii(self, mesh_element_size): # -> rx: list, ry: list
             minor_radius = mesh_element_size * (1+EPS) * 4
             rx = [self._major_radius, minor_radius] * ((self._num_ellipses+1) // 2)
             ry = [minor_radius, self._major_radius] * ((self._num_ellipses+1) // 2)
@@ -84,17 +89,21 @@ if __name__ == "__main__":
     plot_results = False
     write_results = True
 
+    functions_written_periodically = True
+    functions_written_on_convergence = True
+
     # function_writing_period = 100
-    # function_writing_period = 50
-    function_writing_period = 25
+    function_writing_period = 50
+    # function_writing_period = 25
+    # function_writing_period = 10
 
     impose_displacement_bounds = False 
-    # NOTE: Only works with "snes" solver and method called "vinewtonrsls"
+    # NOTE: Only works with "snes" solver and with method "vinewtonrsls"
 
     ### Problem parameters
 
     domain_p0 = np.array([0.0, 0.0])
-    domain_p1 = np.array([2.0, 2.0])
+    domain_p1 = np.array([1.0, 1.0])
 
     # domain_p0 = np.array([0.0, 0.0])
     # domain_p1 = np.array([1.0, 0.5])
@@ -138,25 +147,25 @@ if __name__ == "__main__":
 
     if CASE == "center":
 
-        delta = 0.0
-        # delta = 1e-3
+        # delta = 0.0
+        delta = 1e-3
 
         defect_nucleation_centers = np.array([[(domain_x0+domain_x1)*0.5 - delta,
                                                (domain_y0+domain_y1)*0.5]])
 
-        compute_defect_radii = defect_shape.Round().compute_radii_method
+        compute_defect_radii = defect_shape.Round().compute_radii
 
     elif CASE == "edge_centers":
 
-        # delta = 0.0
-        delta = 1e-3
+        delta = 0.0
+        # delta = 1e-3
 
         defect_nucleation_centers = np.array([[(domain_x0+domain_x1)*0.5+delta, domain_y0],
                                               [domain_x1, (domain_y0+domain_y1)*0.5+delta],
                                               [domain_x0, (domain_y0+domain_y1)*0.5-delta],
                                               [(domain_x0+domain_x1)*0.5-delta, domain_y1]])
 
-        compute_defect_radii = defect_shape.Round().compute_radii_method
+        compute_defect_radii = defect_shape.Round().compute_radii
 
     elif CASE == "vertices":
 
@@ -174,7 +183,7 @@ if __name__ == "__main__":
                                               [domain_x1-delta, domain_y1],
                                               [domain_x0+delta, domain_y1]])
 
-        compute_defect_radii = defect_shape.Round().compute_radii_method
+        compute_defect_radii = defect_shape.Round().compute_radii
 
     elif CASE == "vertices_elliptical":
 
@@ -188,13 +197,15 @@ if __name__ == "__main__":
         # r_major = domain_L*(3/4)
 
         compute_defect_radii = defect_shape.AlternatingAxesEllipses(
-            r_major, len(defect_nucleation_centers)).compute_radii_method
+            r_major, len(defect_nucleation_centers)).compute_radii
 
     elif CASE == "grid_of_defects":
 
         nx = ny = 4
 
-        delta = 1e-3
+        delta = 0.0
+        # delta = 1e-3
+
         defect_nucleation_centers = examples.utility.perturbed_gridcols(
                                     examples.utility.perturbed_gridcols(
                                     examples.utility.meshgrid_uniform(
@@ -206,7 +217,7 @@ if __name__ == "__main__":
         # defect_nucleation_centers = examples.utility.meshgrid_uniform_with_margin(domain_p0, domain_p1, nx, ny)
         # defect_nucleation_centers = examples.utility.meshgrid_checker_symmetric(domain_p0, domain_p1, nx, ny)
 
-        compute_defect_radii = defect_shape.Round().compute_radii_method
+        compute_defect_radii = defect_shape.Round().compute_radii
 
     elif CASE == "two_ellipses":
 
@@ -218,7 +229,7 @@ if __name__ == "__main__":
         # r_major = domain_L*(3/4)
 
         compute_defect_radii = defect_shape \
-            .HorizontalEllipse(r_major).compute_radii_method
+            .HorizontalEllipse(r_major).compute_radii
 
     else:
         raise ValueError("`CASE`")
@@ -237,9 +248,9 @@ if __name__ == "__main__":
     phasefield_collision_distance = [
         # 0.05,
         # 0.10,
-        # 1/8,
+        1/8,
         # 0.20,
-        1/4,
+        # 1/4,
         # 1/3,
         # 1/2,
         ]
@@ -254,19 +265,20 @@ if __name__ == "__main__":
     # Phasefield iteration stepsize (L_inf-norm)
     phasefield_iteration_stepsize = [
         0.10,
+        # 0.05,
         # 0.02,
-        # 0.01,
         ]
 
     minimum_phasefield_meanvalue = None
-    maximum_phasefield_meanvalue = 0.3
+    maximum_phasefield_meanvalue = 0.16
     minimum_energy_fraction = 1e-5 # 1e-4
 
     ### Discretization parameters
 
     num_elements_on_edges = [
-        80,
-        # 159,
+        # 79,
+        # 80,
+        159,
         # 160,
         # 240,
         ] # NOTE: Even/odd numbers of elements may reveal mesh dependence
@@ -362,11 +374,13 @@ if __name__ == "__main__":
 
         ### Displacement bounds
         if impose_displacement_bounds:
+            
+            # NOTE: Assuming the bottom left corner does not displace.
 
-            # Displacement bounding box
             xmin = domain_p0
             xmax = domain_p1.copy()
 
+            # Displacement bounding box after deformation
             xmax[0] += mean_axial_strains_i[0] * domain_L 
             xmax[1] += mean_axial_strains_i[1] * domain_H
             
@@ -475,23 +489,39 @@ if __name__ == "__main__":
                 examples.utility.remove_outfiles(results_outdir_figures, SAFE_TO_REMOVE_FILE_TYPES)
                 examples.utility.remove_outfiles(results_outdir_functions, SAFE_TO_REMOVE_FILE_TYPES)
 
-                solution_writer_p = examples.utility.FunctionWriter(
-                    results_outdir_functions, p, "p", function_writing_period)
+                if functions_written_periodically:
+                    
+                    periodic_function_writer_p = examples.utility.PeriodicFunctionWriter(
+                        results_outdir_functions, p, "p_iteration", function_writing_period)
+                
+                    periodic_function_writer_u = examples.utility.PeriodicFunctionWriter(
+                        results_outdir_functions, u, "u_iteration", function_writing_period)
 
-                solution_writer_u = examples.utility.FunctionWriter(
-                    results_outdir_functions, u, "u", function_writing_period)
+                    def write_functions_periodically():
+                        periodic_function_writer_p.write()
+                        # periodic_function_writer_u.write() # NOTE: Too much memory
+                
+                else:
+                    write_functions_periodically = None
 
-                def write_solutions():
-                    solution_writer_p.write()
-                    solution_writer_u.write()
+                if functions_written_on_convergence:
+                    
+                    converged_function_writer_p = examples.utility.FunctionWriter(
+                        results_outdir_functions, p, "p_converged")
+                    
+                    converged_function_writer_u = examples.utility.FunctionWriter(
+                        results_outdir_functions, u, "u_converged")
 
-                def write_solutions_periodic():
-                    solution_writer_p.periodic_write()
-                    # solution_writer_u.periodic_write() # NOTE: High memory demand
+                    def write_functions_on_convergence():
+                        converged_function_writer_p.write()
+                        converged_function_writer_u.write()
+                
+                else:
+                    write_functions_on_convergence = None
 
             else:
-                write_solutions = None
-                write_solutions_periodic = None
+                write_functions_periodically = None
+                write_functions_on_convergence = None
 
             u.vector()[:] = u_arr_undamaged
 
@@ -514,12 +544,10 @@ if __name__ == "__main__":
                     minimum_phasefield_meanvalue,
                     maximum_phasefield_meanvalue,
                     minimum_energy_for_stopping,
-                    write_solutions_periodic,
+                    callback_at_each_phasefield_iteration=write_functions_periodically, # for debugging
+                    callback_at_each_phasefield_meanvalue=write_functions_on_convergence,
                     )
-
-            if write_solutions:
-                write_solutions()
-
+                    
             # energy_vs_iterations = energy_vs_iterations[
             #     ::max(1, int(len(energy_vs_iterations)/1000))]
 
@@ -595,9 +623,10 @@ if __name__ == "__main__":
             problem_elapsed_time = problem_finish_time - problem_start_time
 
             problem_elapsed_time_readable = {
-                "Days":    int(problem_elapsed_time // (24*3600)),
-                "Hours":   int((problem_elapsed_time % (24*3600)) // 3600),
-                "Minutes": int((problem_elapsed_time % 3600) // 60),
+                "Years":   int(problem_elapsed_time // (24*3600*365)),
+                "Days":    int(problem_elapsed_time % (24*3600*365) // (24*3600)),
+                "Hours":   int(problem_elapsed_time % (24*3600) // 3600),
+                "Minutes": int(problem_elapsed_time % 3600 // 60),
                 "Seconds": int(problem_elapsed_time % 60)}
 
             if logger.getEffectiveLevel() <= logging.INFO:
