@@ -25,7 +25,8 @@ parameters_distance_solver = {
     }
 
 parameters_nonlinear_solver = {
-    'nonlinear_solver': 'newton',
+    'nonlinear_solver': 'newton', # Faster than "snes" but can not impose displacement bounds
+    # 'nonlinear_solver': 'snes', # Can impose displacement bounds if using method "vinewtonrsls"
     'symmetric': True,
     'print_matrix': False,
     'print_rhs': False,
@@ -47,8 +48,11 @@ parameters_nonlinear_solver = {
         'linear_solver': 'lu',
         'maximum_iterations': 20, # 50
         'maximum_residual_evaluations': 2000,
-        'method': 'default',
-        'preconditioner': 'default',
+        # 'method': 'default',
+        'method': 'vinewtonrsls',
+        # 'preconditioner': 'default',
+        'preconditioner': 'ilu',
+        # 'preconditioner': 'hypre_amg',
         'relative_tolerance': 1e-9,
         'report': False,
         'sign': 'default',

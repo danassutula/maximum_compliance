@@ -271,6 +271,8 @@ class TopologyOptimizer:
             num_iterations += 1
 
             try:
+                # Break if the mean cost decrease over the recent 
+                # `minimum_convergences` iterations is small enough.
                 if (cost_values[-minimum_convergences-1] - J_cur) / \
                    minimum_convergences < abs(J_cur)*convergence_tolerance:
                     logger.info('Reached minimum number of convergences')
@@ -319,7 +321,7 @@ class TopologyOptimizer:
 
         if len(self._p_locals) > 1:
             mask = (self._d_arr_locals < self._collision_distance).sum(0) > 1
-            s = np.sort(self._d_arr_locals[:,mask], 0)[1] / self._collision_distance
+            s = np.sort(self._d_arr_locals[:,mask], 0)[1] / self._collision_distance  # NOTE: Should not have to sort; just need second smallest element
             p_arr[mask] *= self._collision_smoothing_weight(s)
 
 
